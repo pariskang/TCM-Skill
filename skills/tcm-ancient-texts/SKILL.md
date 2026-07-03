@@ -103,4 +103,5 @@ LLM 三重归一)。可切换 LLM 后端 `--provider rule|litellm|azure|poe|open
 - `rules/30-safety.md` — 医学安全红线(毒性药物表、十八反十九畏)
 - `references/corpus.md` — 语料概况、书目分类、授权说明
 - `references/data-format.md` — 数据格式(HTML schema / SQLite / JSONL)
+- `references/classical-20.md` — **二十经典导览**:各书内容摘要、检索策略、主题速查表(经子进程实际检索验证)
 - `docs/GRAPHRAG.md`(仓库根)— 证据推理层完整设计与用法
