@@ -15,8 +15,17 @@
 - 首次使用:`python3 skills/tcm-ancient-texts/scripts/tcm.py fetch && python3 skills/tcm-ancient-texts/scripts/tcm.py build`
 - 快速试用:`fetch --sample 20` 再 `build`。
 
+## 古今表型证据 GraphRAG(证据推理层)
+
+- 证据推理用 `skills/tcm-ancient-texts/scripts/tcm_graphrag.py`(复用 tcm.py 索引)。
+- 核心引擎零依赖;LLM 后端可选 `rule`(默认离线)/litellm/azure/poe/openai,SDK 懒加载。
+- 本体数据在 `scripts/ontology/*.<domain>.json`;新增病种加三个 JSON 即可。
+- 完整设计见 `docs/GRAPHRAG.md`。
+
 ## 开发约定
 
 - `tcm.py` 只用 Python 标准库,保持零依赖;改动后用
   `search 桂枝湯` / `get "傷寒論(宋本)" --seq 156 --context 2` 冒烟验证。
 - 修改解析器需重新 `build` 并对比段落总数,防止静默丢文。
+- `graphrag/` 引擎核心也保持零依赖(仅 LLM 后端可选);改动后用
+  `tcm_graphrag.py ask "骨痿 腰膝酸软"`(默认 rule)冒烟,确保离线可跑。

@@ -75,6 +75,24 @@ python3 scripts/tcm.py list --keyword 傷寒
 - 库中未收录的书(如现代教材)明确说"不在本语料库内",不要用别的书冒充。
 - 涉及临床话题时附一句:"以上为古籍文献记载,仅供文献研究,不构成医疗建议。"
 
+## 进阶:古今表型证据 GraphRAG(证据推理层)
+
+当任务不是"查条文原文"而是**"哪些古籍条文能作为某现代疾病/证候研究的证据"**
+(古今表型映射、证据链、证据分级、跨书证据发现)时,用 `scripts/tcm_graphrag.py`:
+
+```bash
+# 默认离线(rule provider,无需 API key),输出带等级/映射/核验的证据卡片
+python3 scripts/tcm_graphrag.py ask "绝经后骨质疏松 肾虚血瘀 骨痛 活动受限"
+python3 scripts/tcm_graphrag.py ask "骨痿 腰膝酸软" --format json   # 供下游消费
+python3 scripts/tcm_graphrag.py domains                            # 可用病种本体
+```
+
+它复用同一份 SQLite 索引,叠加:古今术语本体、四路召回、加权重排、五重模型角色
+(Extractor/Normalizer/Reranker/EvidenceJudge/Verifier)、排除机制与证据卡片。
+可切换 LLM 后端 `--provider rule|litellm|azure|poe|openai` 提升质量。
+**引用铁律同样适用**:证据卡片的原文与出处来自检索,不可脱离工具编造。
+详见 `docs/GRAPHRAG.md`(在仓库根)。当前病种 MVP:骨质疏松。
+
 ## 参考文档(按需查阅)
 
 - `rules/00-core.md` — 核心行为纪律(完整版)
@@ -83,3 +101,4 @@ python3 scripts/tcm.py list --keyword 傷寒
 - `rules/30-safety.md` — 医学安全红线(毒性药物表、十八反十九畏)
 - `references/corpus.md` — 语料概况、书目分类、授权说明
 - `references/data-format.md` — 数据格式(HTML schema / SQLite / JSONL)
+- `docs/GRAPHRAG.md`(仓库根)— 证据推理层完整设计与用法

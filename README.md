@@ -46,6 +46,24 @@ $ tcm.py search "太陽之為病"
 引文自带三要素出处(书·篇·段),agent 的每一条引用都可一键复核;
 底本异体字(𤍠、𤼵、隂)原样保留,忠于文献。
 
+## 进阶:古今表型证据 GraphRAG
+
+在检索地基之上叠加**证据推理层**——输入现代疾病/证候/症状组合,返回带**证据等级、
+古今表型映射、证候-治法-方药链、模型判断理由与事实核验**的证据卡片:
+
+```bash
+# 默认离线(rule provider,无需 API key)
+python3 skills/tcm-ancient-texts/scripts/tcm_graphrag.py ask "绝经后骨质疏松 肾虚血瘀 骨痛 活动受限"
+
+# 接入真实 LLM 后端(litellm / azure / poe / openai 可切换)
+TCM_LLM_PROVIDER=poe POE_API_KEY=xxx \
+  python3 skills/tcm-ancient-texts/scripts/tcm_graphrag.py ask "骨痿 腰膝酸软 老年"
+```
+
+四路召回(BM25/同义/语义/图谱)+ 加权重排 + 五重模型角色(抽取/归一/精排/证据裁判/
+幻觉核验)+ **排除机制**(如识别《素问》"大骨枯槁…期六月死"实为危候而非骨质疏松,
+判为 E 级排除)。当前病种 MVP:骨质疏松。完整设计见 [`docs/GRAPHRAG.md`](docs/GRAPHRAG.md)。
+
 ## 仓库结构
 
 ```

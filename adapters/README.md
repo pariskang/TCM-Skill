@@ -39,6 +39,18 @@ Codex 无技能系统,但会读取仓库根 `AGENTS.md`:
   `docs/DESIGN.md` 的扩展路线将 `tcm.py` 包装为 MCP server
   (search/get/info 三个 tool,一层薄封装)。
 
+## LLM 后端(GraphRAG 证据推理层)
+
+`scripts/tcm_graphrag.py` 的 LLM 后端与上述平台**正交**——任何平台的 agent 都可
+调用它,后端在其内部通过统一抽象切换,支持 **litellm / azure / poe / openai**,
+默认 `rule` 离线规则引擎(无需 key)。配置见 `docs/GRAPHRAG.md`:
+
+- OpenClaw / Codex / 自研 agent:直接 `python3 tcm_graphrag.py ask "…"`,
+  用环境变量或 `--provider` 选后端;
+- 需要接入自建/私有模型:用 `--provider openai --api-base <你的端点>`(OpenAI 兼容),
+  或 `litellm` 的 model 前缀路由。
+- SDK 懒加载,未装对应库不影响 rule 模式与技能其余功能。
+
 ## 一致性保障
 
 - 修改规则只改 `skills/tcm-ancient-texts/` 下的文件;
