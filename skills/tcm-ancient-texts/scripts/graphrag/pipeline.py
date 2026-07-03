@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from . import agents
-from .config import EngineConfig
+from .config import EngineConfig, ROLES
 from .corpus import Corpus
 from .evidence import Candidate, EvidenceCard
 from .llm import make_client
@@ -26,8 +26,7 @@ class GraphRAG:
         self.onto = load_ontology(cfg.domain)
         self.corpus = Corpus()
         # 每角色可用不同模型;provider=rule 时全部返回 None(走确定性规则)
-        self.clients = {r: make_client(cfg.llm.for_role(r)) for r in
-                        ("analyzer", "extractor", "normalizer", "judge", "verifier")}
+        self.clients = {r: make_client(cfg.llm.for_role(r)) for r in ROLES}
         self.reranker = Reranker(self.onto, cfg.weights, semantic_enabled=False)
 
     def close(self):
@@ -39,10 +38,16 @@ class GraphRAG:
         analysis = agents.analyze_query(self.clients["analyzer"], query, self.onto)
         log(f"解析:古籍检索词={analysis['ancient_terms']} 证候种子={analysis['seed_patterns']}")
 
+        if not analysis.get("has_domain_signal") and not analysis["ancient_terms"]:
+            return {"query_analysis": analysis, "cards": [],
+                    "note": (f"查询未匹配到病种「{self.onto.label}」的任何古籍术语、证候或"
+                             f"现代表型。请确认查询与当前病种相关(--domain 可切换病种),"
+                             f"或改用该病种相关的证候/症状/古籍词。")}
+
         recaller = Recaller(self.corpus, self.onto)
         cands = recaller.recall(analysis["ancient_terms"], analysis["seed_patterns"],
                                 per_term=max(8, self.cfg.topk_recall // 4), book=book)
-        log(f"召回 {len(cands)} 条候选(四路合并去重)")
+        log(f"召回 {len(cands)} 条候选(lexical+synonym+graph 合并去重;semantic 未启用)")
         if not cands:
             return {"query_analysis": analysis, "cards": [], "note": "四路召回均无命中"}
 
@@ -55,7 +60,11 @@ class GraphRAG:
 
         cards: List[EvidenceCard] = []
         for c in cands[: self.cfg.topk_cards]:
-            cards.append(self._build_card(c, analysis))
+            try:
+                cards.append(self._build_card(c, analysis))
+            except Exception as e:   # 单张卡片(如某次 LLM 返回异常)不拖垮整个 ask
+                log(f"跳过候选 段{c.seq}《{c.book}》:{type(e).__name__}: {e}")
+        cards = [k for k in cards if k]
 
         cards.sort(key=lambda k: (_GRADE_ORDER.get(k.grade, 9), -k.relevance_score))
         return {"query_analysis": analysis, "cards": cards,

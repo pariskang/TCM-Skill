@@ -42,14 +42,31 @@ class Corpus:
             return self.like_search(term, limit, book)
 
     def like_search(self, term: str, limit: int = 50, book: Optional[str] = None):
-        sql = "SELECT id, book, seq, path, text, 0.0 AS rank FROM paras WHERE text LIKE ?"
-        params = [f"%{term}%"]
+        # 2 字词无法走 trigram FTS,用 LIKE。关键:必须确定性且跨书排序,否则退化为
+        # "按 rowid 取最早几行",全量语料下核心 2 字词(腎虛/骨痿/腰痛…)会静默漏检
+        # 大量书。用窗口函数按书轮取(每本书先出密度最高的一段,再第二段…),
+        # 保证跨书覆盖;书内以出现次数(密度)降序 + 短段优先作为无 BM25 时的相关度代理。
+        term = term.strip()
+        if not term:
+            return []
+        dens = "(length(text) - length(replace(text, ?, '')))"
+        sql = (f"SELECT id, book, seq, path, text FROM ("
+               f"  SELECT id, book, seq, path, text, {dens} AS _hits, "
+               f"  ROW_NUMBER() OVER (PARTITION BY book "
+               f"    ORDER BY {dens} DESC, length(text) ASC) AS _rn "
+               f"  FROM paras WHERE text LIKE ?")
+        params = [term, term, f"%{term}%"]
         if book:
             sql += " AND book = ?"
             params.append(book)
-        sql += " LIMIT ?"
+        sql += ") ORDER BY _rn ASC, _hits DESC LIMIT ?"
         params.append(limit)
-        return [dict(r) for r in self.db.execute(sql, params).fetchall()]
+        rows = []
+        for r in self.db.execute(sql, params).fetchall():
+            d = dict(r)
+            d["rank"] = 0.0
+            rows.append(d)
+        return rows
 
     def get_passage(self, passage_id: int):
         r = self.db.execute(

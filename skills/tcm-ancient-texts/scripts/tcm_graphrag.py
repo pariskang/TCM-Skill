@@ -53,9 +53,10 @@ def _overrides(args) -> dict:
 def cmd_ask(args):
     cfg = load_config(args.config_file, _overrides(args))
     from graphrag.pipeline import GraphRAG
+    from graphrag.llm import LLMError
     try:
         engine = GraphRAG(cfg)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, LLMError) as e:
         sys.exit(f"[error] {e}")
     try:
         result = engine.ask(args.query, book=args.book, verbose=args.verbose)

@@ -26,21 +26,26 @@ fetch && build`,再用 `tcm_graphrag.py ask`。
 ## 五层架构
 
 ```
-查询理解 → 四路召回 → 加权重排 → 五重模型角色 → 证据卡片
-  │           │           │            │
-  │           │           │            ├ Extractor   实体抽取 + evidence_span
-  │           │           │            ├ Normalizer  古今术语映射 + 匹配类型
-  │           │           │            ├ Reranker    (可选)LLM 精排
-  │           │           │            ├ EvidenceJudge 证据等级 A-E + 理由
-  │           │           │            └ Verifier    幻觉核验(断言↔原文)
+查询理解 → 多路召回 → 加权重排(确定性)→ 模型裁判 → 证据卡片
+  │           │           │                 │
+  │           │           │                 ├ Extractor   实体抽取 + evidence_span
+  │           │           │                 ├ Normalizer  古今术语映射 + 匹配类型
+  │           │           │                 ├ EvidenceJudge 证据等级 A-E + 理由
+  │           │           │                 └ Verifier    幻觉核验(断言↔原文)
   │           │           └ S_final 加权(lexical/semantic/ontology/phenotype/
-  │           │              context/evidence/dynasty − exclusion)
-  │           ├ lexical  FTS5 trigram 精确短语
-  │           ├ synonym  本体同义/异体扩展
-  │           ├ semantic (可选)向量语义,未配置则跳过不伪造
-  │           └ graph    图谱路径:证候→表型/治法/方药→回检语料
-  └ 拆解为:现代疾病 / 现代表型 / 中医证候 / 古籍检索词 / 证候种子
+  │           │              context/evidence/dynasty − exclusion);刻意用确定性
+  │           │              公式而非 LLM,以保证可复现(LLM 精排见路线图)
+  │           ├ lexical  FTS5 trigram 精确短语        ┐
+  │           ├ synonym  本体同义/异体扩展            ├ 已实现
+  │           ├ graph    图谱路径:证候→表型/治法/方药→回检语料 ┘
+  │           └ semantic (预留)向量语义,未配置则跳过不伪造,见路线图
+  └ QueryAnalyzer:拆解为 现代疾病 / 现代表型 / 中医证候 / 古籍检索词 / 证候种子
 ```
+
+**五个 LLM 判断角色** = QueryAnalyzer + Extractor + Normalizer + EvidenceJudge +
+Verifier(均可用 `role_models` 分别指定模型)。重排(Reranker)刻意采用确定性
+加权公式而非 LLM,是有意的设计选择——保证同一查询结果可复现;"LLM 交叉编码器精排"
+作为可选增强列在路线图。当前召回三路已实现(lexical/synonym/graph),semantic 预留。
 
 ## 本体:古今双向映射
 
@@ -183,7 +188,7 @@ scripts/
 │   ├── llm.py                # LLM 客户端抽象(litellm/azure/poe/openai)
 │   ├── corpus.py             # 只读语料访问(复用 tcm.py 索引)
 │   ├── ontology.py           # 本体加载/同义扩展/排除/图谱
-│   ├── recall.py             # 四路召回
+│   ├── recall.py             # 多路召回(lexical/synonym/graph;semantic 预留)
 │   ├── rerank.py             # 加权重排
 │   ├── agents.py             # 五重模型角色 + 查询解析(LLM/规则双路)
 │   ├── evidence.py           # 证据对象 + 证据卡片渲染

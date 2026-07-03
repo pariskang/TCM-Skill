@@ -12,7 +12,7 @@ import re
 from typing import List, Optional
 
 from .llm import LLMClient
-from .ontology import Ontology
+from .ontology import Ontology, to_traditional
 
 _SENT_SPLIT = re.compile(r"[。！？；\n]")
 
@@ -40,22 +40,30 @@ def analyze_query(client: Optional[LLMClient], query: str, onto: Ontology) -> di
         for k in ("ancient_terms", "seed_patterns", "tcm_patterns"):
             merged = list(dict.fromkeys((data.get(k) or []) + rule.get(k, [])))
             data[k] = merged
-        data.setdefault("modern_disease", rule["modern_disease"])
-        data.setdefault("modern_phenotypes", rule["modern_phenotypes"])
+        # 用 or 而非 setdefault:模型给 null 时也回退规则结果
+        data["modern_disease"] = data.get("modern_disease") or rule["modern_disease"]
+        data["modern_phenotypes"] = data.get("modern_phenotypes") or rule["modern_phenotypes"]
+        data["has_domain_signal"] = bool(
+            data.get("ancient_terms") or data.get("seed_patterns")
+            or rule["has_domain_signal"])
         return data
     except Exception:
         return _rule_analyze(query, onto)
 
 
 def _rule_analyze(query: str, onto: Ontology) -> dict:
+    query = to_traditional(query)   # 简体查询归一到繁体,避免离线路径丢词
+    graph_srcs = onto.graph_sources()
     ancient, seeds, patterns = [], [], []
-    # 直接命中的古籍同义词
+    # 直接命中的古籍同义词。种子取"命中词 ∩ 图谱源节点",不再只限 L2,
+    # 使 骨痿/腰痛 等病名/表型类查询也能触发图谱路径召回。
     for t in onto.terms:
         for s in t.synonyms:
             if s in query:
                 ancient.append(t.term)
-                if t.layer == "L2_pattern":
+                if t.term in graph_srcs:
                     seeds.append(t.term)
+                if t.layer == "L2_pattern":
                     patterns.append(t.term)
                 break
     # 经桥接矩阵:现代表型词 → 古籍词
@@ -66,22 +74,21 @@ def _rule_analyze(query: str, onto: Ontology) -> dict:
                 modern_pheno.append(mp)
                 ancient.extend(b.get("ancient", []))
                 patterns.extend(b.get("tcm", []))
+                seeds.extend(a for a in b.get("ancient", []) if a in graph_srcs)
     for d in onto.modern_layers.get("M1_disease", []):
         if any(part in query for part in re.split(r"[（(]", d)):
             modern_dis.append(d)
-    # 证候词直接扫描(现代中医术语,如"肾虚血瘀")
-    for t in onto.layer_terms("L2_pattern"):
-        for s in t.synonyms:
-            if s in query and t.term not in seeds:
-                seeds.append(t.term)
-                patterns.append(t.term)
     dedup = lambda xs: list(dict.fromkeys(xs))
+    # 是否检出与本病种相关的任何信号(古籍词/证候/现代表型/现代病名)。
+    # 无信号时不回退默认词 —— 否则会给无关查询伪造高置信证据。
+    has_signal = bool(ancient or seeds or modern_pheno or modern_dis)
     return {
-        "modern_disease": dedup(modern_dis) or [onto.label],
+        "modern_disease": dedup(modern_dis),
         "modern_phenotypes": dedup(modern_pheno),
         "tcm_patterns": dedup(patterns),
-        "ancient_terms": dedup(ancient) or [t.term for t in onto.layer_terms("L1_disease")[:3]],
-        "seed_patterns": dedup(seeds) or [t.term for t in onto.layer_terms("L2_pattern")[:3]],
+        "ancient_terms": dedup(ancient),
+        "seed_patterns": dedup(seeds),
+        "has_domain_signal": has_signal,
     }
 
 
@@ -100,6 +107,8 @@ def extract(client: Optional[LLMClient], text: str, onto: Ontology) -> dict:
             '"evidence_span":"原文片段"}')
     try:
         d = client.complete_json(sys, user)
+        if not isinstance(d, dict):
+            return _rule_extract(text, onto)
         if not d.get("evidence_span"):
             d["evidence_span"] = _best_span(text, _rule_extract(text, onto))
         return d
@@ -156,7 +165,14 @@ def normalize(client: Optional[LLMClient], entities: dict, onto: Ontology,
             f"现代表型候选:{onto.bridge_phenotypes()}\n\n"
             '输出 JSON:{"modern_phenotypes":[],"mapping_type":"","confidence":0.0}')
     try:
-        return client.complete_json(sys, user)
+        d = client.complete_json(sys, user)
+        if not isinstance(d, dict):
+            return _rule_normalize(entities, onto, text)
+        # 净化字段类型,避免下游 join/迭代崩溃
+        if not isinstance(d.get("modern_phenotypes"), list):
+            d["modern_phenotypes"] = _rule_normalize(entities, onto, text)["modern_phenotypes"]
+        d["mapping_type"] = str(d.get("mapping_type") or "")
+        return d
     except Exception:
         return _rule_normalize(entities, onto, text)
 
@@ -194,7 +210,15 @@ def judge(client: Optional[LLMClient], query_analysis: dict, card_data: dict,
             '输出 JSON:{"grade":"A/B/C/D/E","relevance_score":0.0,"reason":""}')
     try:
         d = client.complete_json(sys, user)
-        d["grade"] = str(d.get("grade", "C")).strip().upper()[:1]
+        if not isinstance(d, dict):
+            return _rule_judge(card_data, onto)
+        grade = str(d.get("grade") or "C").strip().upper()[:1]
+        d["grade"] = grade if grade in "ABCDE" else "C"
+        # 净化相关性分:模型可能给 null / 文字 / 超界
+        try:
+            d["relevance_score"] = max(0.0, min(1.0, float(d.get("relevance_score"))))
+        except (TypeError, ValueError):
+            d["relevance_score"] = _rule_judge(card_data, onto)["relevance_score"]
         return d
     except Exception:
         return _rule_judge(card_data, onto)
@@ -241,9 +265,14 @@ def verify(client: Optional[LLMClient], evidence_span: str, card_data: dict,
             f"待核验要素:{card_data}\n\n"
             '输出 JSON:{"grounded":true/false,"note":"不成立的断言或说明"}')
     try:
-        return client.complete_json(sys, user)
+        d = client.complete_json(sys, user)
+        if not isinstance(d, dict):
+            return _rule_verify(card_data, full_text, onto)
+        d["grounded"] = bool(d.get("grounded"))
+        d["note"] = str(d.get("note") or "")
+        return d
     except Exception:
-        return _rule_verify(card_data, full_text)
+        return _rule_verify(card_data, full_text, onto)
 
 
 def _rule_verify(card_data: dict, full_text: str, onto: Ontology = None) -> dict:
@@ -255,7 +284,11 @@ def _rule_verify(card_data: dict, full_text: str, onto: Ontology = None) -> dict
             syn_index[t.term] = t.synonyms
     missing = []
     for key in ("ancient_disease_terms", "manifestations", "formulas_or_herbs"):
-        for term in card_data.get(key) or []:
+        val = card_data.get(key) or []
+        if not isinstance(val, list):   # 防 LLM 把数组给成字符串导致逐字迭代
+            val = [val]
+        for term in val:
+            term = str(term)
             variants = syn_index.get(term, [term])
             if not any(v in full_text for v in variants):
                 missing.append(term)

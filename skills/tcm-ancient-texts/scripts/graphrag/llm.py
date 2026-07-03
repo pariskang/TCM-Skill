@@ -55,10 +55,19 @@ class LLMClient:
                 return _extract_json(raw)
             except ValueError as e:
                 last_err = e
-                messages.append({"role": "assistant", "content": raw[:2000]})
+                messages.append({"role": "assistant", "content": (raw or "")[:2000]})
                 messages.append({"role": "user",
                                  "content": "上一次输出不是合法 JSON。请只返回一个合法 JSON 对象。"})
         raise LLMError(f"模型未能返回合法 JSON: {last_err}")
+
+
+def _is_format_error(exc: Exception) -> bool:
+    """判断异常是否因 response_format(json_mode)不被支持而起。
+    仅对这类错误做"去掉 json_mode 重试",避免把鉴权/超时/限流也重试一遍。"""
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "response_format", "json_object", "json mode", "not supported",
+        "unsupported", "invalid parameter", "unrecognized", "bad request", "400"))
 
 
 def _extract_json(text: str):
@@ -74,35 +83,39 @@ def _extract_json(text: str):
         return json.loads(t)
     except json.JSONDecodeError:
         pass
-    # 扫描第一个平衡的 {..} 或 [..]
+    # 扫描平衡的 {..} 或 [..];某个平衡组解析失败时,从下一个 opener 继续找
     for opener, closer in (("{", "}"), ("[", "]")):
-        s = t.find(opener)
-        if s < 0:
-            continue
-        depth = 0
-        in_str = False
-        esc = False
-        for i in range(s, len(t)):
-            c = t[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif c == "\\":
-                    esc = True
-                elif c == '"':
-                    in_str = False
-            else:
-                if c == '"':
-                    in_str = True
-                elif c == opener:
-                    depth += 1
-                elif c == closer:
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            return json.loads(t[s:i + 1])
-                        except json.JSONDecodeError:
+        start = t.find(opener)
+        while start >= 0:
+            depth = 0
+            in_str = False
+            esc = False
+            end = -1
+            for i in range(start, len(t)):
+                c = t[i]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                else:
+                    if c == '"':
+                        in_str = True
+                    elif c == opener:
+                        depth += 1
+                    elif c == closer:
+                        depth -= 1
+                        if depth == 0:
+                            end = i
                             break
+            if end >= 0:
+                try:
+                    return json.loads(t[start:end + 1])
+                except json.JSONDecodeError:
+                    pass
+            start = t.find(opener, start + 1)
     raise ValueError(f"无法解析 JSON:{text[:200]!r}")
 
 
@@ -128,8 +141,8 @@ class LiteLLMClient(LLMClient):
         kw.update(self.cfg.extra)
         try:
             resp = litellm.completion(**kw)
-        except Exception:
-            if json_mode:
+        except Exception as e:
+            if json_mode and "response_format" in kw and _is_format_error(e):
                 kw.pop("response_format", None)
                 resp = litellm.completion(**kw)
             else:
@@ -160,8 +173,8 @@ class _OpenAICompatClient(LLMClient):
         kw.update(self.cfg.extra)
         try:
             resp = client.chat.completions.create(**kw)
-        except Exception:
-            if json_mode:
+        except Exception as e:
+            if json_mode and "response_format" in kw and _is_format_error(e):
                 kw.pop("response_format", None)
                 resp = client.chat.completions.create(**kw)
             else:
@@ -192,8 +205,8 @@ class AzureClient(LLMClient):
         kw.update(self.cfg.extra)
         try:
             resp = client.chat.completions.create(**kw)
-        except Exception:
-            if json_mode:
+        except Exception as e:
+            if json_mode and "response_format" in kw and _is_format_error(e):
                 kw.pop("response_format", None)
                 resp = client.chat.completions.create(**kw)
             else:

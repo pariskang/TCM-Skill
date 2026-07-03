@@ -1,8 +1,9 @@
-"""四路召回:lexical(BM25/FTS)+ synonym(本体同义扩展)+ semantic(可选向量)
-+ graph(图谱路径扩展),合并去重为候选证据集。
+"""多路召回:lexical(BM25/FTS)+ synonym(本体同义扩展)+ graph(图谱路径扩展),
+合并去重为候选证据集。
 
-semantic 路由为可选增强:仅当配置了 embedding provider 时启用;否则跳过并记录,
-不伪造语义分。这符合"确定性地基优先、概率性增强其次"的设计原则。
+设计上预留第四路 semantic(向量语义),为可选增强:仅当配置了 embedding provider
+时启用;当前实现默认不启用,也不伪造语义分(rerank 中 semantic 权重按比例分摊)。
+这符合"确定性地基优先、概率性增强其次"的设计原则;接入方式见 docs/GRAPHRAG.md 路线图。
 """
 from __future__ import annotations
 
@@ -65,7 +66,8 @@ class Recaller:
             terms_to_search = [tgt]
             for t in self.onto.terms:
                 if tgt == t.term or tgt in t.synonyms:
-                    terms_to_search = t.synonyms
+                    # 含规范名本身(个别术语规范名未收进 synonyms)
+                    terms_to_search = list(dict.fromkeys([t.term] + t.synonyms))
                     break
             for st in terms_to_search[:3]:
                 for r in self.corpus.fts_search(st, per_term // 3, book):

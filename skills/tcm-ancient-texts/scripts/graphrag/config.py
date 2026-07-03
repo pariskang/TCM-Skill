@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# 五个模型角色
-ROLES = ("extractor", "normalizer", "reranker", "judge", "verifier")
+# 五个 LLM 判断角色(与 pipeline 实际创建的 client 一一对应)。
+# 重排(rerank)刻意采用确定性加权公式而非 LLM,以保证结果可复现,故不在此列。
+ROLES = ("analyzer", "extractor", "normalizer", "judge", "verifier")
 
 
 @dataclass
@@ -70,27 +71,11 @@ def load_config(path: Optional[str] = None, overrides: Optional[dict] = None) ->
     cfg = EngineConfig()
     llm = cfg.llm
 
-    # 1) 环境变量
+    # 1) 通用环境变量(provider 专属凭据留到 provider 最终确定后再读,见第 4 步)
     llm.provider = _env("TCM_LLM_PROVIDER", default="rule").lower()
     llm.model = _env("TCM_LLM_MODEL")
     llm.temperature = float(_env("TCM_LLM_TEMPERATURE", default="0") or 0)
     llm.max_tokens = int(_env("TCM_LLM_MAX_TOKENS", default="1024") or 1024)
-
-    # provider 专属环境变量
-    if llm.provider == "azure":
-        llm.api_key = _env("AZURE_OPENAI_API_KEY", "TCM_LLM_API_KEY")
-        llm.api_base = _env("AZURE_OPENAI_ENDPOINT", "TCM_LLM_API_BASE")
-        llm.api_version = _env("AZURE_OPENAI_API_VERSION", default="2024-06-01")
-        llm.deployment = _env("AZURE_OPENAI_DEPLOYMENT", "TCM_LLM_MODEL")
-    elif llm.provider == "poe":
-        llm.api_key = _env("POE_API_KEY", "TCM_LLM_API_KEY")
-        llm.api_base = _env("POE_API_BASE", default="https://api.poe.com/v1")
-    elif llm.provider == "openai":
-        llm.api_key = _env("OPENAI_API_KEY", "TCM_LLM_API_KEY")
-        llm.api_base = _env("OPENAI_BASE_URL", "TCM_LLM_API_BASE")
-    elif llm.provider == "litellm":
-        llm.api_key = _env("TCM_LLM_API_KEY", "OPENAI_API_KEY")
-        llm.api_base = _env("TCM_LLM_API_BASE")
 
     # 2) 配置文件(覆盖环境变量)
     path = path or _env("TCM_GRAPHRAG_CONFIG")
@@ -101,15 +86,38 @@ def load_config(path: Optional[str] = None, overrides: Optional[dict] = None) ->
     # 3) CLI overrides(最高)
     if overrides:
         _apply(cfg, overrides)
+    llm.provider = (llm.provider or "rule").lower()   # 文件/CLI 传入也规范化
 
-    # 4) provider 默认兜底(在 provider 最终确定后再补默认端点/模型)
-    if llm.provider == "poe" and not llm.api_base:
-        llm.api_base = "https://api.poe.com/v1"
-    if llm.provider == "azure" and not llm.api_version:
-        llm.api_version = "2024-06-01"
+    # 4) provider 专属凭据/端点(此时 provider 已最终确定;仅填补仍为空的字段,
+    #    使 --provider / 配置文件指定 provider 时也能从环境变量取到凭据)
+    _fill_provider_env(llm)
     if not llm.model:
         llm.model = _DEFAULT_MODELS.get(llm.provider, "")
     return cfg
+
+
+def _fill_provider_env(llm: LLMConfig):
+    """按最终 provider 从环境变量补全空缺的凭据/端点。已由文件/CLI 设置的不覆盖。"""
+    def fill(attr, *names, default=""):
+        if not getattr(llm, attr):
+            v = _env(*names, default=default)
+            if v:
+                setattr(llm, attr, v)
+
+    if llm.provider == "azure":
+        fill("api_key", "AZURE_OPENAI_API_KEY", "TCM_LLM_API_KEY")
+        fill("api_base", "AZURE_OPENAI_ENDPOINT", "TCM_LLM_API_BASE")
+        fill("api_version", "AZURE_OPENAI_API_VERSION", default="2024-06-01")
+        fill("deployment", "AZURE_OPENAI_DEPLOYMENT", "TCM_LLM_MODEL")
+    elif llm.provider == "poe":
+        fill("api_key", "POE_API_KEY", "TCM_LLM_API_KEY")
+        fill("api_base", "POE_API_BASE", default="https://api.poe.com/v1")
+    elif llm.provider == "openai":
+        fill("api_key", "OPENAI_API_KEY", "TCM_LLM_API_KEY")
+        fill("api_base", "OPENAI_BASE_URL", "TCM_LLM_API_BASE")
+    elif llm.provider == "litellm":
+        fill("api_key", "TCM_LLM_API_KEY", "OPENAI_API_KEY")
+        fill("api_base", "TCM_LLM_API_BASE")
 
 
 def _apply(cfg: EngineConfig, data: dict):

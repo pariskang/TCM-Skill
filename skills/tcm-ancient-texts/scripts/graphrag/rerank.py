@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from .evidence import Candidate
-from .ontology import Ontology, LAYER_LABELS
+from .ontology import Ontology
 
 DEFAULT_WEIGHTS = {
     "lexical": 0.20, "semantic": 0.20, "ontology": 0.15, "phenotype": 0.15,
@@ -36,7 +36,12 @@ class Reranker:
         if weights:
             self.w.update(weights)
         self.semantic_enabled = semantic_enabled
-        self._phenos = onto.bridge_phenotypes()
+        # 从本体 L1(病名)/L3(表型)术语字符派生 context 加成关键词,
+        # 避免写死某病种字符(换病种后仍能正确加成)。
+        self._context_chars = set()
+        for t in onto.terms:
+            if t.layer in ("L1_disease", "L3_manifestation"):
+                self._context_chars.update(t.term)
         # 若无语义分,把 semantic 权重分摊给 lexical+ontology
         if not semantic_enabled:
             s = self.w.pop("semantic", 0.0)
@@ -60,8 +65,8 @@ class Reranker:
             # lexical:命中词数 + 是否有 FTS 路由
             sub["lexical"] = min(1.0, len(c.matched_terms) / max_terms
                                  + (0.2 if "lexical" in c.routes else 0))
-            # semantic
-            sub["semantic"] = semantic_scores.get(c.passage_id, 0.0)
+            # semantic(钳位到 [0,1],防外部向量分越界破坏可比性)
+            sub["semantic"] = min(1.0, max(0.0, semantic_scores.get(c.passage_id, 0.0)))
             # ontology:命中的 L 层覆盖度
             layers = self._layers_present(text)
             sub["ontology"] = len(layers & set(_CHAIN_LAYERS)) / len(_CHAIN_LAYERS)
@@ -71,8 +76,7 @@ class Reranker:
             # context:证据链完整性的上下文信号(标题路径含相关字 + 长度适中)
             plen = len(text)
             sub["context"] = (0.5 if 80 <= plen <= 600 else 0.2 if plen < 80 else 0.35)
-            path_bonus = 0.5 if any(k in c.path for k in
-                                    ("痿", "腰", "骨", "腎", "虛", "痹")) else 0.0
+            path_bonus = 0.5 if any(ch in self._context_chars for ch in c.path) else 0.0
             sub["context"] = min(1.0, sub["context"] + path_bonus)
             # evidence:是否形成 病名/表型 + 病机 + 治法/方药 链
             has_symptom = layers & {"L1_disease", "L3_manifestation"}

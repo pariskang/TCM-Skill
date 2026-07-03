@@ -17,6 +17,25 @@ LAYER_LABELS = {
     "L7_outcome": "结局/预后",
 }
 
+# 最小简→繁映射:覆盖本体术语及常见中医字,让离线 rule 路径不因简体查询丢词。
+# 非完整转换(完整转换交给 LLM analyzer 或 opencc);仅保证常见查询可用。
+SIMP2TRAD = {
+    "软": "軟", "肾": "腎", "阴": "陰", "阳": "陽", "证": "證", "脉": "脈",
+    "气": "氣", "热": "熱", "湿": "濕", "风": "風", "经": "經", "络": "絡",
+    "脏": "臟", "虚": "虛", "补": "補", "泻": "瀉", "归": "歸", "术": "朮",
+    "断": "斷", "续": "續", "龟": "龜", "摇": "搖", "齿": "齒", "艰": "艱",
+    "妇": "婦", "丝": "絲", "医": "醫", "药": "藥", "针": "針", "壮": "壯",
+    "肠": "腸", "节": "節", "涩": "澀", "无": "無", "后": "後", "发": "發",
+    "会": "會", "体": "體", "灵": "靈", "卫": "衛", "营": "營", "痹": "痹",
+    "带": "帶", "痉": "痙", "厥": "厥", "疸": "疸", "痫": "癇", "瘅": "癉",
+    "浊": "濁", "涌": "湧", "渗": "滲", "颤": "顫", "举": "舉", "废": "廢",
+}
+
+
+def to_traditional(text: str) -> str:
+    """按最小映射把简体字逐字转繁体(未收录字原样保留)。"""
+    return "".join(SIMP2TRAD.get(c, c) for c in text)
+
 
 @dataclass
 class Term:
@@ -70,6 +89,7 @@ class Ontology:
         adj: Dict[str, list] = {}
         for e in self.edges:
             adj.setdefault(e["s"], []).append((e["r"], e["t"]))
+        seed_set = set(seeds)
         reached = {}
         frontier = [(s, 0) for s in seeds]
         seen = set(seeds)
@@ -78,11 +98,17 @@ class Ontology:
             if hop >= max_hops:
                 continue
             for rel, tgt in adj.get(node, []):
+                if tgt in seed_set:      # 不把种子自身当图谱目标(避免 2-环绕回起点)
+                    continue
                 reached.setdefault(tgt, []).append((node, rel))
                 if tgt not in seen:
                     seen.add(tgt)
                     frontier.append((tgt, hop + 1))
         return reached
+
+    def graph_sources(self) -> set:
+        """图谱边的全部源节点(用于确定哪些查询命中词可作图谱种子)。"""
+        return {e["s"] for e in self.edges}
 
     def bridge_phenotypes(self) -> List[str]:
         out = []
