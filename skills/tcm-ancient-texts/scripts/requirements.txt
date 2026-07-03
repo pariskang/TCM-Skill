@@ -9,10 +9,14 @@ litellm>=1.40 ; extra == "litellm"
 openai>=1.30 ; extra == "openai"
 
 # 说明:
-#   azure  → 需 openai(AzureOpenAI 客户端)
+#   azure  → 需 openai(AzureOpenAI 客户端;chat 与 embedding 均用它)
 #   poe    → 需 openai(OpenAI 兼容端点 https://api.poe.com/v1)
 #   openai → 需 openai
-#   litellm→ 需 litellm
+#   litellm→ 需 litellm(chat 与 embedding 均可)
 # 安装示例:
 #   pip install "litellm>=1.40"        # 用 litellm
 #   pip install "openai>=1.30"         # 用 azure/poe/openai
+
+# 可选增强(均非必需,不装也能全功能离线运行):
+opencc-python-reimplemented ; extra == "opencc"   # 简繁转换更完整(否则用内置表)
+numpy>=1.24 ; extra == "numpy"                     # 神经嵌入语义检索的余弦加速(大规模)

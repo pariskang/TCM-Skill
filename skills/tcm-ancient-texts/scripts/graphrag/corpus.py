@@ -80,6 +80,20 @@ class Corpus:
             (book, seq - span, seq + span)).fetchall()
         return [dict(r) for r in rows]
 
+    def all_passages(self) -> list:
+        """全部 (passage_id, text),用于构建语义索引。"""
+        return [(r["id"], r["text"]) for r in
+                self.db.execute("SELECT id, text FROM paras").fetchall()]
+
+    def passages_by_ids(self, ids: list) -> dict:
+        if not ids:
+            return {}
+        q = ",".join("?" * len(ids))
+        rows = self.db.execute(
+            f"SELECT id, book, seq, path, text FROM paras WHERE id IN ({q})", ids
+        ).fetchall()
+        return {r["id"]: dict(r) for r in rows}
+
     def book_meta(self, book: str):
         r = self.db.execute("SELECT * FROM books WHERE book = ?", (book,)).fetchone()
         return dict(r) if r else {}

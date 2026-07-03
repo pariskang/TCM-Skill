@@ -47,6 +47,20 @@ def _overrides(args) -> dict:
         ov["domain"] = args.domain
     if getattr(args, "topk", None):
         ov["topk_cards"] = args.topk
+    # 语义召回后端
+    sem = {}
+    if getattr(args, "semantic", None):
+        sem["provider"] = args.semantic
+    if getattr(args, "embed_model", None):
+        sem["provider"] = sem.get("provider") or "openai"
+        sem["model"] = args.embed_model
+    if sem:
+        ov["semantic"] = sem
+    # LLM 精排开关
+    if getattr(args, "no_llm_rerank", False):
+        ov["llm_rerank"] = False
+    if getattr(args, "llm_rerank", False):
+        ov["llm_rerank"] = True
     return ov
 
 
@@ -55,7 +69,7 @@ def cmd_ask(args):
     from graphrag.pipeline import GraphRAG
     from graphrag.llm import LLMError
     try:
-        engine = GraphRAG(cfg)
+        engine = GraphRAG(cfg, verbose_build=args.verbose)
     except (FileNotFoundError, LLMError) as e:
         sys.exit(f"[error] {e}")
     try:
@@ -77,6 +91,14 @@ def cmd_ask(args):
     print(f"**检索词** — {'、'.join(qa.get('ancient_terms', []))}")
     print(f"**LLM 后端** — {cfg.llm.provider}"
           + (f"（{cfg.llm.model or cfg.llm.deployment}）" if cfg.llm.provider != "rule" else "（离线规则引擎）"))
+    rr = "开" if (cfg.llm_rerank and cfg.llm.provider != "rule") else "关"
+    if cfg.semantic.provider in ("off", "none", ""):
+        sem_label = "关"
+    elif cfg.semantic.provider == "tfidf":
+        sem_label = "tfidf（char-ngram TF-IDF,离线）"
+    else:
+        sem_label = f"{cfg.semantic.provider}（{cfg.semantic.model or '神经嵌入'}）"
+    print(f"**语义召回** — {sem_label} | **LLM 精排** — {rr}")
     print(f"**候选/产出** — 召回重排 {result.get('n_candidates', 0)} 条,"
           f"输出 {len(cards)} 张证据卡片\n")
     if not cards:
@@ -127,6 +149,9 @@ def cmd_config(args):
                 "role_models": cfg.llm.role_models},
         "domain": cfg.domain, "topk_recall": cfg.topk_recall,
         "topk_cards": cfg.topk_cards, "weights": cfg.weights or "(默认)",
+        "semantic": {"provider": cfg.semantic.provider, "model": cfg.semantic.model,
+                     "topk": cfg.semantic.topk},
+        "llm_rerank": cfg.llm_rerank, "llm_rerank_topn": cfg.llm_rerank_topn,
     }, ensure_ascii=False, indent=2))
 
 
@@ -139,6 +164,14 @@ def _add_common(p):
     p.add_argument("--temperature", type=float)
     p.add_argument("--domain")
     p.add_argument("--config-file", dest="config_file")
+    p.add_argument("--semantic", choices=["off", "tfidf", "litellm", "openai", "azure"],
+                   help="语义召回后端(默认 tfidf 离线;神经嵌入需对应 SDK)")
+    p.add_argument("--embed-model", dest="embed_model",
+                   help="神经嵌入模型(如 text-embedding-3-small / bge-m3)")
+    p.add_argument("--llm-rerank", dest="llm_rerank", action="store_true",
+                   help="强制开启 LLM 交叉编码器精排")
+    p.add_argument("--no-llm-rerank", dest="no_llm_rerank", action="store_true",
+                   help="关闭 LLM 精排")
 
 
 def main():

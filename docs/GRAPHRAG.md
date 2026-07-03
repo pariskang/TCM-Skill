@@ -26,26 +26,53 @@ fetch && build`,再用 `tcm_graphrag.py ask`。
 ## 五层架构
 
 ```
-查询理解 → 多路召回 → 加权重排(确定性)→ 模型裁判 → 证据卡片
-  │           │           │                 │
-  │           │           │                 ├ Extractor   实体抽取 + evidence_span
-  │           │           │                 ├ Normalizer  古今术语映射 + 匹配类型
-  │           │           │                 ├ EvidenceJudge 证据等级 A-E + 理由
-  │           │           │                 └ Verifier    幻觉核验(断言↔原文)
+查询理解 → 四路召回 → 加权重排 → LLM 精排 → 模型裁判 → 证据卡片
+  │           │           │          │          │
+  │           │           │          │          ├ Extractor   实体抽取 + evidence_span
+  │           │           │          │          ├ Normalizer  古今术语映射 + 匹配类型
+  │           │           │          │          ├ EvidenceJudge 证据等级 A-E + 理由
+  │           │           │          │          └ Verifier    幻觉核验(断言↔原文)
+  │           │           │          └ Reranker  交叉编码器式 LLM 相关性精排(可选;
+  │           │           │             与确定性分 5:5 融合;provider=rule 时跳过)
   │           │           └ S_final 加权(lexical/semantic/ontology/phenotype/
-  │           │              context/evidence/dynasty − exclusion);刻意用确定性
-  │           │              公式而非 LLM,以保证可复现(LLM 精排见路线图)
-  │           ├ lexical  FTS5 trigram 精确短语        ┐
-  │           ├ synonym  本体同义/异体扩展            ├ 已实现
-  │           ├ graph    图谱路径:证候→表型/治法/方药→回检语料 ┘
-  │           └ semantic (预留)向量语义,未配置则跳过不伪造,见路线图
-  └ QueryAnalyzer:拆解为 现代疾病 / 现代表型 / 中医证候 / 古籍检索词 / 证候种子
+  │           │              context/evidence/dynasty − exclusion),确定性、可复现
+  │           ├ lexical  FTS5 trigram 精确短语 + LIKE(2 字词按书轮取,跨书覆盖)
+  │           ├ synonym  本体同义/异体扩展
+  │           ├ graph    图谱路径:证候→表型/治法/方药→回检语料
+  │           └ semantic 向量语义:tfidf(离线默认)或神经嵌入(litellm/openai/azure)
+  └ QueryAnalyzer:简繁归一 + 拆解为 现代疾病/现代表型/中医证候/古籍检索词/证候种子
 ```
 
-**五个 LLM 判断角色** = QueryAnalyzer + Extractor + Normalizer + EvidenceJudge +
-Verifier(均可用 `role_models` 分别指定模型)。重排(Reranker)刻意采用确定性
-加权公式而非 LLM,是有意的设计选择——保证同一查询结果可复现;"LLM 交叉编码器精排"
-作为可选增强列在路线图。当前召回三路已实现(lexical/synonym/graph),semantic 预留。
+**六个 LLM 角色** = QueryAnalyzer + Extractor + Normalizer + **Reranker** +
+EvidenceJudge + Verifier(均可用 `role_models` 分别指定模型;provider=rule 时全部
+走确定性规则)。加权重排是确定性公式(可复现);其后的 Reranker 是**可选**的 LLM
+交叉编码器精排,与加权分 5:5 融合。四路召回全部已实现。
+
+## 语义召回(第四路)
+
+两种后端,统一接口(`embeddings.py`):
+
+| 后端 | 依赖 | 说明 |
+|---|---|---|
+| `tfidf`(默认) | 无 | 字符 n-gram(2+3)TF-IDF + 倒排索引 + 余弦。离线、零依赖、确定性、可缓存;能召回"用词相近但非精确子串"的条文(如查"骨弱不能行走"召回"虛弱不能行"条文) |
+| `litellm`/`openai`/`azure` | 对应 SDK | 神经嵌入(如 text-embedding-3-small / bge-m3),语义级;大规模建议装 numpy 加速余弦 |
+
+- 索引在首次 `ask` 时构建并**磁盘缓存**(`data/semantic/`,按段落数指纹),重建即失效;
+- 语义分同时用于**召回**(补齐精确匹配漏掉的条文)与**重排**(S_final 的 semantic 子分);
+- 简体查询在语义检索前先转繁体(语料为繁体),否则召不回;
+- `--semantic off` 关闭,`--semantic openai --embed-model text-embedding-3-small` 用神经嵌入。
+
+## LLM 交叉编码器精排(Reranker)
+
+加权重排取 top-N(默认 20)后,把 `查询 × 每条原文` 批量交给 LLM 逐条打相关性分
+(0~1),识别"貌似相关实则语境不符"的条文(危候/外伤/他病),与确定性加权分 5:5
+融合后重排。`provider=rule` 或 `--no-llm-rerank` 时跳过,保持纯确定性排序。
+
+## 简繁完美支持
+
+三重保障:opencc(若 `pip install opencc-python-reimplemented`,完整权威)→ 内置
+高频字表(离线兜底,~200 字覆盖中医术语)→ LLM 分析器(有 LLM 后端时语义级转换,
+处理一简多繁与口语)。查询、语义检索、术语匹配全链路统一用繁体。
 
 ## 本体:古今双向映射
 
@@ -111,11 +138,16 @@ export OPENAI_API_KEY=...  OPENAI_BASE_URL=https://api.openai.com/v1
   "llm": {
     "provider": "openai",
     "model": "gpt-4o-mini",
-    "role_models": {"judge": "gpt-4o", "verifier": "gpt-4o"}
+    "role_models": {"judge": "gpt-4o", "verifier": "gpt-4o", "reranker": "gpt-4o-mini"}
   },
+  "semantic": {"provider": "openai", "model": "text-embedding-3-small", "topk": 40},
+  "llm_rerank": true,
+  "llm_rerank_topn": 20,
   "topk_cards": 10
 }
 ```
+
+语义嵌入默认复用主 LLM 凭据;如需用不同 key/端点做嵌入,在 `semantic.llm` 单独指定。
 
 ## 用法
 
@@ -167,14 +199,23 @@ S_final = 0.20·lexical + 0.20·semantic + 0.15·ontology + 0.15·phenotype
 剔除)与完整出处、evidence_span、判断理由、排除检查,供专家 15% 抽样复核
 (κ 一致性)。模型负责建议,专家负责确认。
 
+## 已完成的核心能力
+
+- ✅ **语义召回**:tfidf 离线倒排 + 神经嵌入(litellm/openai/azure),磁盘缓存,
+  同时用于召回与重排子分。
+- ✅ **LLM 交叉编码器精排**:top-N 批量相关性精排,与确定性分 5:5 融合。
+- ✅ **简繁完美支持**:opencc 可选 + 内置表 + LLM 分析器三重保障。
+
 ## 扩展路线
 
-1. **语义召回**:`tcm.py build --jsonl` → 段落 embedding(bge-m3)→ 与 FTS5 做
-   RRF 混合;在 `recall.py` 接入 `semantic_scores`,`rerank.py` 打开 `semantic_enabled`。
+1. **神经嵌入 RRF 融合**:当前语义分以加权方式并入 S_final;可进一步与 lexical 排名
+   做 RRF(Reciprocal Rank Fusion),对长尾查询更稳。
 2. **MCP Server**:把 `ask` 封装为 MCP tool,接入 Claude Desktop / 任意 MCP 客户端。
 3. **多病种**:银屑病、认知障碍——各加一组 `ontology/*.<domain>.json`。
 4. **结构化抽取库**:方剂表(方名-组成-剂量-主治-出处)入 SQLite 新表。
 5. **评测集**:已知出处的条文金标准问答,回归验证"始终走检索而非记忆"。
+6. **全量语料向量化加速**:百万级段落建议神经嵌入 + numpy/faiss;tfidf 倒排在
+   全量下内存占用需评估(当前每段截 top-160 特征已做界定)。
 
 ## 目录
 
@@ -184,13 +225,15 @@ scripts/
 ├── tcm_graphrag.py           # GraphRAG CLI 入口
 ├── requirements.txt          # 可选 LLM SDK
 ├── graphrag/
-│   ├── config.py             # 配置解析(env/文件/CLI,每角色模型)
+│   ├── config.py             # 配置解析(env/文件/CLI,每角色模型,语义/精排开关)
 │   ├── llm.py                # LLM 客户端抽象(litellm/azure/poe/openai)
+│   ├── zh.py                 # 简繁转换(opencc 可选 + 内置表 + LLM)
 │   ├── corpus.py             # 只读语料访问(复用 tcm.py 索引)
 │   ├── ontology.py           # 本体加载/同义扩展/排除/图谱
-│   ├── recall.py             # 多路召回(lexical/synonym/graph;semantic 预留)
-│   ├── rerank.py             # 加权重排
-│   ├── agents.py             # 五重模型角色 + 查询解析(LLM/规则双路)
+│   ├── embeddings.py         # 语义后端:tfidf 倒排(离线)+ 神经嵌入 + 磁盘缓存
+│   ├── recall.py             # 四路召回(lexical/synonym/graph/semantic)
+│   ├── rerank.py             # 加权重排(确定性)
+│   ├── agents.py             # 六个 LLM 角色 + 查询解析(LLM/规则双路)
 │   ├── evidence.py           # 证据对象 + 证据卡片渲染
 │   └── pipeline.py           # 编排
 └── ontology/

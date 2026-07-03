@@ -33,12 +33,15 @@ def _merge(pool: Dict[int, Candidate], rows, route: str, term: str,
 
 
 class Recaller:
-    def __init__(self, corpus: Corpus, onto: Ontology):
+    def __init__(self, corpus: Corpus, onto: Ontology, semantic_index=None):
         self.corpus = corpus
         self.onto = onto
+        self.semantic_index = semantic_index
 
     def recall(self, query_terms: List[str], seed_patterns: List[str],
-               per_term: int = 20, book: Optional[str] = None) -> List[Candidate]:
+               per_term: int = 20, book: Optional[str] = None,
+               semantic_text: Optional[str] = None,
+               semantic_topk: int = 40) -> List[Candidate]:
         pool: Dict[int, Candidate] = {}
 
         # 路由 1+2:lexical 与 synonym 合并处理
@@ -72,5 +75,20 @@ class Recaller:
             for st in terms_to_search[:3]:
                 for r in self.corpus.fts_search(st, per_term // 3, book):
                     _merge(pool, [r], "graph", st, graph_trace=trace)
+
+        # 路由 3:语义召回 —— 查询向量最近邻,补齐"用词相近但未精确命中"的条文
+        if self.semantic_index is not None and semantic_text:
+            hits = self.semantic_index.query(semantic_text, topk=semantic_topk)
+            need = [pid for pid, _ in hits if pid not in pool]
+            fetched = self.corpus.passages_by_ids(need)
+            for pid, sc in hits:
+                row = pool.get(pid)
+                if row is None:
+                    src = fetched.get(pid)
+                    if not src or (book and src["book"] != book):
+                        continue
+                    _merge(pool, [src], "semantic", "")
+                elif "semantic" not in row.routes:
+                    row.routes.append("semantic")
 
         return list(pool.values())

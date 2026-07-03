@@ -1,8 +1,9 @@
-"""编排:query → 解析 → 四路召回 → 加权重排 → 五重模型角色 → 证据卡片。
+"""编排:query → 解析 → 多路召回(含语义)→ 加权重排 → LLM 精排 → 模型裁判 → 证据卡片。
 
 流程:
-  analyze_query → Recaller.recall → Reranker.score → (逐候选) Extractor →
-  Normalizer → EvidenceJudge → Verifier → EvidenceCard → 按等级/相关性排序。
+  analyze_query → Recaller.recall(lexical+synonym+graph+semantic) → Reranker.score
+  → (可选)rerank_llm 交叉编码器精排 → (逐候选) Extractor → Normalizer →
+  EvidenceJudge → Verifier → EvidenceCard → 按等级/相关性排序。
 """
 from __future__ import annotations
 
@@ -21,13 +22,34 @@ _GRADE_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
 
 
 class GraphRAG:
-    def __init__(self, cfg: EngineConfig):
+    def __init__(self, cfg: EngineConfig, verbose_build=False):
         self.cfg = cfg
         self.onto = load_ontology(cfg.domain)
         self.corpus = Corpus()
         # 每角色可用不同模型;provider=rule 时全部返回 None(走确定性规则)
         self.clients = {r: make_client(cfg.llm.for_role(r)) for r in ROLES}
-        self.reranker = Reranker(self.onto, cfg.weights, semantic_enabled=False)
+        # 语义索引(默认 tfidf 离线;可切神经嵌入),带磁盘缓存
+        self.semantic_index = self._build_semantic(verbose_build)
+        self.reranker = Reranker(self.onto, cfg.weights,
+                                 semantic_enabled=self.semantic_index is not None)
+
+    def _build_semantic(self, verbose):
+        sem = self.cfg.semantic
+        if sem.provider in ("off", "none", ""):
+            return None
+        from .embeddings import build_index
+        embed_llm = None
+        if sem.provider != "tfidf":
+            # 复用主 LLM 凭据,除非 semantic.llm 单独指定;model 用 semantic.model
+            embed_llm = sem.llm or self.cfg.llm.for_role("analyzer")
+            if sem.model:
+                embed_llm.model = sem.model
+        try:
+            return build_index(self.corpus.all_passages(), sem,
+                               llm_for_embed=embed_llm, verbose=verbose)
+        except Exception as e:
+            print(f"[graphrag] 语义索引构建失败,降级为无语义:{e}", flush=True)
+            return None
 
     def close(self):
         self.corpus.close()
@@ -44,19 +66,46 @@ class GraphRAG:
                              f"现代表型。请确认查询与当前病种相关(--domain 可切换病种),"
                              f"或改用该病种相关的证候/症状/古籍词。")}
 
-        recaller = Recaller(self.corpus, self.onto)
-        cands = recaller.recall(analysis["ancient_terms"], analysis["seed_patterns"],
-                                per_term=max(8, self.cfg.topk_recall // 4), book=book)
-        log(f"召回 {len(cands)} 条候选(lexical+synonym+graph 合并去重;semantic 未启用)")
+        # 语义检索也须用繁体查询(语料为繁体),否则简体查询召不回
+        from .zh import to_traditional
+        sem_query = to_traditional(query)
+
+        recaller = Recaller(self.corpus, self.onto, self.semantic_index)
+        cands = recaller.recall(
+            analysis["ancient_terms"], analysis["seed_patterns"],
+            per_term=max(8, self.cfg.topk_recall // 4), book=book,
+            semantic_text=sem_query, semantic_topk=self.cfg.semantic.topk)
+        sem_on = "semantic" if self.semantic_index is not None else "semantic 未启用"
+        n_sem = sum(1 for c in cands if "semantic" in c.routes)
+        log(f"召回 {len(cands)} 条候选(lexical+synonym+graph+{sem_on};其中语义命中 {n_sem})")
         if not cands:
-            return {"query_analysis": analysis, "cards": [], "note": "四路召回均无命中"}
+            return {"query_analysis": analysis, "cards": [], "note": "多路召回均无命中"}
 
         book_dyn = {}
         for c in cands:
             if c.book not in book_dyn:
                 book_dyn[c.book] = self.corpus.book_meta(c.book).get("dynasty", "")
-        cands = self.reranker.score(cands, book_dyn)[: self.cfg.topk_recall]
-        log(f"重排完成,进入模型裁判 top {min(self.cfg.topk_cards, len(cands))}")
+        # 语义子分:对全部候选算查询-原文余弦(不止语义路由命中的)
+        sem_scores = {}
+        if self.semantic_index is not None:
+            sem_scores = self.semantic_index.scores(sem_query, [c.passage_id for c in cands])
+        cands = self.reranker.score(cands, book_dyn, sem_scores)[: self.cfg.topk_recall]
+
+        # LLM 交叉编码器精排(可选;provider=rule 或关闭时跳过,保持确定性排序)
+        if self.cfg.llm_rerank and self.clients.get("reranker") is not None:
+            topn = min(self.cfg.llm_rerank_topn, len(cands))
+            payload = [{"id": c.passage_id, "cite": c.cite(), "text": c.text}
+                       for c in cands[:topn]]
+            rel = agents.rerank_llm(self.clients["reranker"], query, payload)
+            if rel:
+                for c in cands[:topn]:
+                    if c.passage_id in rel:
+                        # 融合:确定性加权分 0.5 + LLM 精排 0.5,兼顾可复现与语义判断
+                        c.subscores["llm_rerank"] = round(rel[c.passage_id], 3)
+                        c.score = round(0.5 * c.score + 0.5 * rel[c.passage_id], 4)
+                cands.sort(key=lambda x: x.score, reverse=True)
+                log(f"LLM 精排完成,重排 top {topn}")
+        log(f"进入模型裁判 top {min(self.cfg.topk_cards, len(cands))}")
 
         cards: List[EvidenceCard] = []
         for c in cands[: self.cfg.topk_cards]:

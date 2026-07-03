@@ -24,9 +24,10 @@ _SENT_SPLIT = re.compile(r"[。！？；\n]")
 def analyze_query(client: Optional[LLMClient], query: str, onto: Ontology) -> dict:
     if client is None:
         return _rule_analyze(query, onto)
-    sys = ("你是中医古籍检索的查询解析器。把用户查询拆解为结构化检索意图,"
-           "用于古籍条文召回。ancient_terms 必须是繁体古籍用词(如 骨痿/腰痛/腎虛),"
-           "不要现代病名。")
+    sys = ("你是中医古籍检索的查询解析器。用户查询可能是简体或口语,请先在心中转为"
+           "繁体古籍语汇,再拆解为结构化检索意图,用于古籍条文召回。"
+           "ancient_terms 必须是繁体古籍用词(如 骨痿/腰痛/腎虛),不要现代病名;"
+           "简体词一律转繁体(汤→湯、证→證、肾→腎、酸软→痠軟)。")
     schema = ('{"modern_disease": [..], "modern_phenotypes": [..], '
               '"tcm_patterns": [繁体证候], "ancient_terms": [繁体古籍检索词], '
               '"seed_patterns": [繁体证候,用于图谱扩展]}')
@@ -35,7 +36,7 @@ def analyze_query(client: Optional[LLMClient], query: str, onto: Ontology) -> di
             f"输出 JSON,字段:{schema}")
     try:
         data = client.complete_json(sys, user)
-        # 合并规则结果兜底,避免 LLM 漏词
+        # 合并规则结果兜底,避免 LLM 漏词。规则侧对简体查询做繁体归一后再匹配。
         rule = _rule_analyze(query, onto)
         for k in ("ancient_terms", "seed_patterns", "tcm_patterns"):
             merged = list(dict.fromkeys((data.get(k) or []) + rule.get(k, [])))
@@ -193,6 +194,46 @@ def _rule_normalize(entities: dict, onto: Ontology, text: str) -> dict:
         "mapping_type": best_type,
         "confidence": round(min(0.95, 0.4 + 0.15 * len(set(phenos))), 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# 2.5 Reranker(LLM 交叉编码器精排)
+# ---------------------------------------------------------------------------
+
+def rerank_llm(client: Optional[LLMClient], query: str,
+               candidates: List[dict]) -> Optional[Dict[int, float]]:
+    """对候选做一次 LLM 相关性精排(交叉编码器式:query × 每条原文一起判分)。
+
+    candidates: [{"id": passage_id, "cite": 出处, "text": 原文}]
+    返回 {passage_id: relevance∈[0,1]};client 为 None 或失败返回 None(pipeline 保持
+    确定性加权排序)。一次调用批量评分,控制成本。
+    """
+    if client is None or not candidates:
+        return None
+    sys = ("你是中医古籍检索的交叉编码器重排器。针对查询,逐条判断古籍原文与查询意图的"
+           "相关程度(0~1),需综合病名/表型/证候/治法是否契合,并识别貌似相关实则语境"
+           "不符(如危候预后、外伤、他病)的条文给低分。只依据所给原文判分。")
+    lines = [f'{c["id"]}\t{c["cite"]}\t{c["text"][:160]}' for c in candidates]
+    user = ("查询:" + query + "\n\n候选(id<TAB>出处<TAB>原文):\n"
+            + "\n".join(lines) +
+            '\n\n输出 JSON 数组,每条 {"id": 原样id, "relevance": 0~1}。只输出数组。')
+    try:
+        arr = client.complete_json(sys, user)
+        if isinstance(arr, dict):        # 容忍 {"results":[...]} 包裹
+            arr = arr.get("results") or arr.get("data") or []
+        out = {}
+        for item in arr if isinstance(arr, list) else []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                pid = int(item.get("id"))
+                rel = max(0.0, min(1.0, float(item.get("relevance"))))
+            except (TypeError, ValueError):
+                continue
+            out[pid] = rel
+        return out or None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------

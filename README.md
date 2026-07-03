@@ -60,10 +60,11 @@ TCM_LLM_PROVIDER=poe POE_API_KEY=xxx \
   python3 skills/tcm-ancient-texts/scripts/tcm_graphrag.py ask "骨痿 腰膝酸软 老年"
 ```
 
-多路召回(BM25 / 同义扩展 / 图谱路径;语义向量预留)+ 确定性加权重排 + 五个 LLM 判断
-角色(查询解析 / 抽取 / 归一 / 证据裁判 / 幻觉核验)+ **排除机制**(如识别《素问》
-"大骨枯槁…期六月死"实为危候而非骨质疏松,判为 E 级排除)。当前病种 MVP:骨质疏松。
-完整设计见 [`docs/GRAPHRAG.md`](docs/GRAPHRAG.md)。
+四路召回(BM25 / 同义扩展 / 图谱路径 / **语义向量**)+ 确定性加权重排 + **LLM 交叉
+编码器精排** + 六个 LLM 角色(查询解析 / 抽取 / 归一 / 精排 / 证据裁判 / 幻觉核验)
++ **排除机制**(如识别《素问》"大骨枯槁…期六月死"实为危候而非骨质疏松,判为 E 级排除)。
+**简体查询完美支持**、语义召回离线(TF-IDF)或神经嵌入(litellm/openai/azure)可切换,
+默认全离线可跑。当前病种 MVP:骨质疏松。完整设计见 [`docs/GRAPHRAG.md`](docs/GRAPHRAG.md)。
 
 ## 仓库结构
 

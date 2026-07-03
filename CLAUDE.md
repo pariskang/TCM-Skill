@@ -19,6 +19,9 @@
 
 - 证据推理用 `skills/tcm-ancient-texts/scripts/tcm_graphrag.py`(复用 tcm.py 索引)。
 - 核心引擎零依赖;LLM 后端可选 `rule`(默认离线)/litellm/azure/poe/openai,SDK 懒加载。
+- 四路召回(lexical/synonym/graph/语义)+ 加权重排 + 可选 LLM 精排 + 六个 LLM 角色。
+- 语义后端:`tfidf`(离线默认,零依赖,`data/semantic/` 磁盘缓存)或神经嵌入;
+  简繁转换在 `graphrag/zh.py`(opencc 可选 + 内置表 + LLM)。
 - 本体数据在 `scripts/ontology/*.<domain>.json`;新增病种加三个 JSON 即可。
 - 完整设计见 `docs/GRAPHRAG.md`。
 

@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# 五个 LLM 判断角色(与 pipeline 实际创建的 client 一一对应)。
-# 重排(rerank)刻意采用确定性加权公式而非 LLM,以保证结果可复现,故不在此列。
-ROLES = ("analyzer", "extractor", "normalizer", "judge", "verifier")
+# LLM 判断角色(与 pipeline 实际创建的 client 一一对应)。
+# 加权重排是确定性公式;reranker 是其后可选的 LLM 交叉编码器精排(不改变可复现的
+# 加权分,仅在其上做一次相关性精排,provider=rule 时自动跳过)。
+ROLES = ("analyzer", "extractor", "normalizer", "reranker", "judge", "verifier")
 
 
 @dataclass
@@ -41,12 +42,24 @@ class LLMConfig:
 
 
 @dataclass
+class SemanticConfig:
+    provider: str = "tfidf"         # off | tfidf(离线默认) | litellm | openai | azure
+    model: str = ""                 # 神经嵌入模型(如 text-embedding-3-small / bge-m3)
+    topk: int = 40                  # 语义路由召回条数
+    # 神经嵌入的凭据默认复用主 LLM 配置;如需独立指定可在配置文件 semantic.llm 覆盖
+    llm: Optional[LLMConfig] = None
+
+
+@dataclass
 class EngineConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     topk_recall: int = 60           # 召回候选上限
     topk_cards: int = 10            # 最终证据卡片数
     domain: str = "osteoporosis"    # 当前病种本体
     weights: dict = field(default_factory=dict)   # 覆盖 rerank 权重
+    semantic: SemanticConfig = field(default_factory=SemanticConfig)
+    llm_rerank: bool = True         # 是否启用 LLM 交叉编码器精排(provider=rule 时自动跳过)
+    llm_rerank_topn: int = 20       # 送入 LLM 精排的候选数
 
 
 _DEFAULT_MODELS = {
@@ -125,6 +138,18 @@ def _apply(cfg: EngineConfig, data: dict):
     for k, v in llm_data.items():
         if hasattr(cfg.llm, k) and v is not None:
             setattr(cfg.llm, k, v)
-    for k in ("topk_recall", "topk_cards", "domain", "weights"):
+    for k in ("topk_recall", "topk_cards", "domain", "weights",
+              "llm_rerank", "llm_rerank_topn"):
         if data.get(k) is not None:
             setattr(cfg, k, data[k])
+    sem = data.get("semantic")
+    if sem is not None:
+        for k in ("provider", "model", "topk"):
+            if sem.get(k) is not None:
+                setattr(cfg.semantic, k, sem[k])
+        if sem.get("llm"):   # 独立的嵌入凭据
+            elc = LLMConfig()
+            for k, v in sem["llm"].items():
+                if hasattr(elc, k) and v is not None:
+                    setattr(elc, k, v)
+            cfg.semantic.llm = elc
