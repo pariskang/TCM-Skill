@@ -21,6 +21,9 @@ class Candidate:
     routes: List[str] = field(default_factory=list)   # lexical/synonym/semantic/graph
     matched_terms: List[str] = field(default_factory=list)
     graph_trace: List[str] = field(default_factory=list)
+    # 每个召回列表内的名次(键 "route:term" → 1 起的最好名次),供 RRF 融合。
+    # RRF 只看名次不看分值,天然免疫 BM25/余弦/密度代理三种分值尺度不可比的问题。
+    route_ranks: Dict[str, int] = field(default_factory=dict)
     subscores: Dict[str, float] = field(default_factory=dict)
     score: float = 0.0
 

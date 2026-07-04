@@ -12,6 +12,7 @@ LLM 后端:rule(离线,默认)| litellm | azure | poe | openai。
 
 子命令:
   ask        证据检索判断,输出证据卡片(markdown/json)
+  eval       金标准回归评测(Recall@k/MRR/排除正确率/引用忠实度)
   providers  查看/自检 LLM provider 连通性
   domains    列出可用病种本体
   config     打印当前生效配置
@@ -140,6 +141,18 @@ def cmd_domains(args):
               f"{len(o.edges)} 图谱边）")
 
 
+def cmd_eval(args):
+    cfg = load_config(args.config_file, _overrides(args))
+    from graphrag.evaluate import run_eval
+    from graphrag.llm import LLMError
+    try:
+        ok = run_eval(cfg, gold_path=args.gold, k=args.k)
+    except (FileNotFoundError, LLMError) as e:
+        sys.exit(f"[error] {e}")
+    if not ok:
+        sys.exit(1)
+
+
 def cmd_config(args):
     cfg = load_config(args.config_file, _overrides(args))
     print(json.dumps({
@@ -196,6 +209,12 @@ def main():
     p = sub.add_parser("domains", help="列出病种本体")
     _add_common(p)
     p.set_defaults(func=cmd_domains)
+
+    p = sub.add_parser("eval", help="金标准回归评测(Recall@k/MRR/排除正确率/引用忠实度)")
+    p.add_argument("--gold", help="金标准 JSONL(默认 eval/gold.jsonl)")
+    p.add_argument("--k", type=int, default=10, help="top-k(默认 10)")
+    _add_common(p)
+    p.set_defaults(func=cmd_eval)
 
     p = sub.add_parser("config", help="打印生效配置")
     _add_common(p)

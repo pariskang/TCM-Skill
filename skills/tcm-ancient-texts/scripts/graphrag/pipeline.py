@@ -126,8 +126,10 @@ class GraphRAG:
         # 2. 归一
         norm = agents.normalize(self.clients["normalizer"], ents, self.onto, c.text)
         excl = getattr(c, "_exclusions", None)
-        if excl is None:
-            excl = self.onto.exclusions_in_text(c.text)
+        excl_hard = getattr(c, "_excl_hard", None)
+        if excl is None or excl_hard is None:
+            scoped = self.onto.exclusions_scoped(c.text)
+            excl, excl_hard = scoped["flags"], scoped["hard"]
         card_data = {
             "ancient_disease_terms": ents.get("ancient_disease_terms", []),
             "manifestations": ents.get("manifestations", []),
@@ -138,6 +140,7 @@ class GraphRAG:
             "modern_phenotypes": norm.get("modern_phenotypes", []),
             "mapping_type": norm.get("mapping_type", ""),
             "exclusion_flags": excl,
+            "exclusion_hard": excl_hard,
         }
         # 3. 裁判
         verdict = agents.judge(self.clients["judge"], analysis, card_data, self.onto)

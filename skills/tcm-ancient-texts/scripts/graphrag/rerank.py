@@ -1,7 +1,13 @@
 """加权重排:综合评分而非让模型凭感觉。
 
-S_final = 0.20·lexical + 0.20·semantic + 0.15·ontology + 0.15·phenotype
-        + 0.10·context + 0.10·evidence + 0.05·dynasty - 0.05·exclusion
+S_final = 0.15·lexical + 0.15·semantic + 0.10·rrf + 0.15·ontology
+        + 0.15·phenotype + 0.10·context + 0.10·evidence + 0.05·dynasty
+        - 0.05·exclusion
+
+rrf 子分 = 各召回列表名次的 Reciprocal Rank Fusion(Cormack et al.,
+SIGIR 2009,k=60):RRF(d)=Σ_lists 1/(k+rank_list(d)),再按候选集内最大值
+归一到 [0,1]。它度量"多路召回共识"——被多条独立检索路径都排在前面的条文
+更可信;且只用名次不用分值,免疫 BM25/余弦/密度代理的尺度不可比问题。
 
 无 semantic 分(未启用向量)时,自动把其权重按比例分摊给 lexical/ontology,
 保证分值可比。所有子分归一到 [0,1]。
@@ -14,9 +20,11 @@ from .evidence import Candidate
 from .ontology import Ontology
 
 DEFAULT_WEIGHTS = {
-    "lexical": 0.20, "semantic": 0.20, "ontology": 0.15, "phenotype": 0.15,
-    "context": 0.10, "evidence": 0.10, "dynasty": 0.05, "exclusion": 0.05,
+    "lexical": 0.15, "semantic": 0.15, "rrf": 0.10, "ontology": 0.15,
+    "phenotype": 0.15, "context": 0.10, "evidence": 0.10, "dynasty": 0.05,
+    "exclusion": 0.05,
 }
+_RRF_K = 60   # Cormack et al. 2009 的标准取值,对名次噪声鲁棒
 
 # 朝代/文献权威性先验(粗粒度,可在 bridge 中细化)
 _DYNASTY_WEIGHT = {
@@ -59,6 +67,10 @@ class Reranker:
               semantic_scores: Dict[int, float] = None) -> List[Candidate]:
         semantic_scores = semantic_scores or {}
         max_terms = max((len(c.matched_terms) for c in cands), default=1) or 1
+        # RRF 原始分:各召回列表名次的倒数和;候选集内最大值用于归一
+        rrf_raw = {c.passage_id: sum(1.0 / (_RRF_K + r) for r in c.route_ranks.values())
+                   for c in cands}
+        rrf_max = max(rrf_raw.values(), default=0.0) or 1.0
         for c in cands:
             text = c.text
             sub = {}
@@ -67,6 +79,8 @@ class Reranker:
                                  + (0.2 if "lexical" in c.routes else 0))
             # semantic(钳位到 [0,1],防外部向量分越界破坏可比性)
             sub["semantic"] = min(1.0, max(0.0, semantic_scores.get(c.passage_id, 0.0)))
+            # rrf:多路召回名次共识(见模块 docstring)
+            sub["rrf"] = rrf_raw[c.passage_id] / rrf_max
             # ontology:命中的 L 层覆盖度
             layers = self._layers_present(text)
             sub["ontology"] = len(layers & set(_CHAIN_LAYERS)) / len(_CHAIN_LAYERS)
@@ -88,10 +102,14 @@ class Reranker:
             dyn = book_dynasty.get(c.book, "")
             sub["dynasty"] = next((w for k, w in _DYNASTY_WEIGHT.items()
                                    if k and k in dyn), 0.5)
-            # exclusion(惩罚项)
-            excl = self.onto.exclusions_in_text(text)
-            sub["exclusion"] = min(1.0, len(excl) / 2.0)
-            c._exclusions = excl  # 缓存供裁判使用
+            # exclusion(惩罚项):句级共现判定——硬排除全额扣分,
+            # 软排除(核心词句干净,排除词只在他句)按 0.35 折扣
+            scoped = self.onto.exclusions_scoped(text)
+            excl = scoped["flags"]
+            factor = 1.0 if scoped["hard"] else 0.35
+            sub["exclusion"] = min(1.0, len(excl) / 2.0) * factor
+            c._exclusions = excl          # 缓存供裁判使用
+            c._excl_hard = scoped["hard"]
 
             total = 0.0
             for k, wv in self.w.items():

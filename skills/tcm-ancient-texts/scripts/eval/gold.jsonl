@@ -1,0 +1,12 @@
+{"id": "S01-伤寒提纲跨书", "type": "search", "query": "太陽之為病", "expect_books": ["傷寒論（宋本）", "千金翼方", "傷寒來蘇集"], "note": "同一条文三书留存,检验跨书覆盖(宋本段144/千金翼方段2150/來蘇集段16)"}
+{"id": "S02-本经人参", "type": "search", "query": "人參", "book": "神農本草經", "expect_passages": [{"book": "神農本草經", "seq": 4}], "note": "限书检索精确定位单味药条目"}
+{"id": "S03-血府逐瘀汤", "type": "search", "query": "血府逐瘀湯", "expect_books": ["醫林改錯"], "note": "清代方名精确命中"}
+{"id": "S04-完带汤", "type": "search", "query": "完帶湯", "expect_books": ["傅青主女科"], "note": "妇科方名精确命中"}
+{"id": "S05-银翘散", "type": "search", "query": "銀翹散", "expect_books": ["溫病條辨"], "note": "温病方名精确命中"}
+{"id": "S06-独取寸口跨书", "type": "search", "query": "獨取寸口", "expect_books": ["八十一難經", "脈經"], "note": "脉学纲领条文难经/脉经两源"}
+{"id": "S07-骨痿跨书", "type": "search", "query": "骨痿", "expect_books": ["八十一難經", "備急千金要方"], "note": "2字词 LIKE 路径的跨书轮取回归"}
+{"id": "S08-大医精诚", "type": "search", "query": "凡大醫治病", "expect_passages": [{"book": "備急千金要方", "seq": 4}], "note": "千金卷一医德总纲"}
+{"id": "A01-骨痿证据卡", "type": "ask", "query": "骨痿 腰膝酸軟", "expect_passages": [{"book": "黃帝內經素問", "seq": 136}, {"book": "八十一難經", "seq": 41}], "min_grade": {"黃帝內經素問:136": "C"}, "note": "痿論定义性条文须入卡且不低于C(句级排除回归:肺熱葉焦在他句,不得一票否决)"}
+{"id": "A02-骨枯证据卡", "type": "ask", "query": "骨枯 髓減 腰痛", "min_cards": 1, "note": "多词查询须产出证据卡且全部 evidence_span 通过忠实度核验"}
+{"id": "X01-危候硬排除", "type": "exclusion", "query": "骨枯 髓減", "forbid_substring": "期六月死", "allowed_grades": ["E"], "note": "玉機真臟論危候预后(素問/甲乙經/景岳三源)只允许E级"}
+{"id": "X02-危候硬排除2", "type": "exclusion", "query": "骨痿 腰膝酸軟", "forbid_substring": "期六月死", "allowed_grades": ["E"], "note": "换查询词危候仍不得进入A-D"}

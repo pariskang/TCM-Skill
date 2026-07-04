@@ -34,14 +34,21 @@ fetch && build`,再用 `tcm_graphrag.py ask`。
   │           │           │          │          └ Verifier    幻觉核验(断言↔原文)
   │           │           │          └ Reranker  交叉编码器式 LLM 相关性精排(可选;
   │           │           │             与确定性分 5:5 融合;provider=rule 时跳过)
-  │           │           └ S_final 加权(lexical/semantic/ontology/phenotype/
+  │           │           └ S_final 加权(lexical/semantic/RRF/ontology/phenotype/
   │           │              context/evidence/dynasty − exclusion),确定性、可复现
-  │           ├ lexical  FTS5 trigram 精确短语 + LIKE(2 字词按书轮取,跨书覆盖)
+  │           ├ lexical  FTS5 trigram 精确短语(内建 BM25 排序)+ LIKE(2 字词按书轮取)
   │           ├ synonym  本体同义/异体扩展
-  │           ├ graph    图谱路径:证候→表型/治法/方药→回检语料
+  │           ├ graph    图谱路径:PPR(Personalized PageRank)对证候种子做带重启
+  │           │          随机游走,优先检索"离种子近、多路径汇聚"的表型/治法/方药
   │           └ semantic 向量语义:tfidf(离线默认)或神经嵌入(litellm/openai/azure)
   └ QueryAnalyzer:简繁归一 + 拆解为 现代疾病/现代表型/中医证候/古籍检索词/证候种子
 ```
+
+每条召回列表内的**名次**被完整记录到候选,重排层用 **RRF(Reciprocal Rank
+Fusion,k=60)** 融合为"多路共识"子分——只用名次不用分值,天然免疫 BM25 rank/
+余弦/LIKE 密度代理三种分值尺度不可比的问题;被多条独立检索路径都排在前面的
+条文得分更高。图谱路由的 PPR 取代了原先"BFS 逐跳一视同仁"的扩展方式,
+多跳目标按图结构相关度几何衰减(HippoRAG 验证过的图谱召回打分方式)。
 
 **六个 LLM 角色** = QueryAnalyzer + Extractor + Normalizer + **Reranker** +
 EvidenceJudge + Verifier(均可用 `role_models` 分别指定模型;provider=rule 时全部
@@ -88,12 +95,25 @@ EvidenceJudge + Verifier(均可用 `role_models` 分别指定模型;provider=rul
 当前内置病种:`osteoporosis`(骨质疏松 MVP)。新增病种只需照格式加三个 JSON 文件,
 `domains` 命令自动发现。
 
-## 排除机制:证据系统的关键
+## 排除机制:句级共现判定(证据系统的关键)
 
 朴素检索会把"大骨枯槁,真臟脈見,期六月死"(《素问·玉机真臟论》的**危重预后**)
 误当作"骨枯=骨质疏松"证据。本系统的排除标签会识别 `真臟脈見/期六月死/大肉陷下`,
-在重排中扣分、并由裁判判为 **E 级·已排除**。这种"假阳性鉴别"正是它区别于关键词
-搜索之处。(已在样本语料上验证。)
+在重排中扣分、并由裁判判为 **E 级·已排除**。
+
+但排除不能是"全段关键词一票否决"——古籍长段常同时含定义性论述与其他语境:
+《素问·痿论》既有核心条文"腎氣熱…骨枯而髓減,發為骨痿",又有肺痿论述
+"肺熱葉焦"(后者是排除词)。因此排除采用**句级共现判定**
+(`Ontology.exclusions_scoped`):
+
+- **硬排除**:段内每一个含核心阳性词(L1 病名/L3 表型)的句子都同时含排除词
+  ——核心词本身处于被排除语境 → 重排全额扣分,裁判判 E。
+  (《玉机真臟论》:"大骨枯槁…期六月死"同句 → E ✓)
+- **软排除**:存在至少一个"干净"的核心词句,排除词只在他句——上下文噪声
+  → 扣分打 0.35 折,不判 E;若裁判本判 A 则降为 B 并注明"待复核"。
+  (《痿论》:定义性条文不再被误杀,正常评级 ✓)
+
+两个方向都进了金标准回归用例(A01/X01/X02),任何回归立即暴露。
 
 ## LLM 后端:统一抽象,四家可切换 + 离线兜底
 
@@ -171,17 +191,47 @@ python3 tcm_graphrag.py ask "骨枯 腰痛" --format json
 python3 tcm_graphrag.py providers --check      # 连通性自检
 python3 tcm_graphrag.py domains                # 可用病种
 python3 tcm_graphrag.py config                 # 生效配置
+python3 tcm_graphrag.py eval                   # 金标准回归评测(CI 可用,exit 1 即回归)
 ```
 
 ## 加权重排公式
 
 ```
-S_final = 0.20·lexical + 0.20·semantic + 0.15·ontology + 0.15·phenotype
-        + 0.10·context + 0.10·evidence + 0.05·dynasty − 0.05·exclusion
+S_final = 0.15·lexical + 0.15·semantic + 0.10·rrf + 0.15·ontology
+        + 0.15·phenotype + 0.10·context + 0.10·evidence + 0.05·dynasty
+        − 0.05·exclusion
 ```
 
-未启用 semantic(无向量)时,其权重按 6:4 自动分摊给 lexical/ontology,保证分值可比。
-各子分含义见 `graphrag/rerank.py`。权重可在配置文件 `weights` 覆盖。
+- `rrf` = 各召回列表名次的 Reciprocal Rank Fusion(k=60),按候选集内最大值
+  归一;度量"多路召回共识"。
+- `exclusion` 按句级共现判定:硬排除全额扣分,软排除打 0.35 折(见排除机制)。
+- 未启用 semantic(无向量)时,其权重按 6:4 自动分摊给 lexical/ontology,
+  保证分值可比。各子分含义见 `graphrag/rerank.py`。权重可在配置文件
+  `weights` 覆盖(含新增的 `rrf` 键)。
+
+## 金标准回归评测(eval)
+
+`eval/gold.jsonl` 收录**经 tcm.py 实检验证**的金标准用例(检索/端到端/排除
+三类),`tcm_graphrag.py eval` 用 provider=rule + tfidf 的全确定性路径回归:
+
+| 用例类型 | 验证什么 | 指标 |
+|---|---|---|
+| search | 检索地基:期望书目/段落在 top-k | Recall@k、MRR |
+| ask | 端到端:期望条文入卡、最低等级约束、**全部 evidence_span 过引用忠实度核验** | Recall@k、MRR、span 违例数 |
+| exclusion | 危候等禁忌片段只允许 E 级 | 排除正确率 |
+
+任一用例失败即 exit 1,可直接作 CI 回归门。当前 12/12 通过
+(平均 Recall@10 = 1.000)。
+
+## 引用忠实度:双层确定性防线
+
+LLM 抽取的 `evidence_span` 可能是改写而非原文(attributable generation 的
+经典失败模式)。防线有两层,全部确定性、不依赖 LLM 自查:
+
+1. **源头修复**(`agents.extract`):span 非原文子串(忽略空白)→ 立即替换为
+   规则法选出的真实句子;
+2. **纵深防御**(`agents.verify`):核验入口先做子串检查,不通过直接
+   `grounded=False`,LLM 无权放行。
 
 ## 证据等级
 
@@ -205,17 +255,20 @@ S_final = 0.20·lexical + 0.20·semantic + 0.15·ontology + 0.15·phenotype
   同时用于召回与重排子分。
 - ✅ **LLM 交叉编码器精排**:top-N 批量相关性精排,与确定性分 5:5 融合。
 - ✅ **简繁完美支持**:opencc 可选 + 内置表 + LLM 分析器三重保障。
+- ✅ **RRF 多路融合**:四路召回名次的 Reciprocal Rank Fusion 子分(k=60)。
+- ✅ **PPR 图谱召回**:Personalized PageRank 对图谱扩展目标打分排序。
+- ✅ **句级共现排除**:硬/软排除区分,定义性条文不再被"全段一票否决"误杀。
+- ✅ **引用忠实度双层核验**:evidence_span 源头修复 + 核验入口确定性拦截。
+- ✅ **金标准回归评测**:`eval` 命令,12 用例全确定性回归,CI 可用。
 
 ## 扩展路线
 
-1. **神经嵌入 RRF 融合**:当前语义分以加权方式并入 S_final;可进一步与 lexical 排名
-   做 RRF(Reciprocal Rank Fusion),对长尾查询更稳。
-2. **MCP Server**:把 `ask` 封装为 MCP tool,接入 Claude Desktop / 任意 MCP 客户端。
-3. **多病种**:银屑病、认知障碍——各加一组 `ontology/*.<domain>.json`。
-4. **结构化抽取库**:方剂表(方名-组成-剂量-主治-出处)入 SQLite 新表。
-5. **评测集**:已知出处的条文金标准问答,回归验证"始终走检索而非记忆"。
-6. **全量语料向量化加速**:百万级段落建议神经嵌入 + numpy/faiss;tfidf 倒排在
+1. **MCP Server**:把 `ask` 封装为 MCP tool,接入 Claude Desktop / 任意 MCP 客户端。
+2. **多病种**:银屑病、认知障碍——各加一组 `ontology/*.<domain>.json`。
+3. **结构化抽取库**:方剂表(方名-组成-剂量-主治-出处)入 SQLite 新表。
+4. **全量语料向量化加速**:百万级段落建议神经嵌入 + numpy/faiss;tfidf 倒排在
    全量下内存占用需评估(当前每段截 top-160 特征已做界定)。
+5. **金标准扩容**:随病种/语料扩展持续把实检验证过的用例加入 gold.jsonl。
 
 ## 目录
 
@@ -229,13 +282,16 @@ scripts/
 │   ├── llm.py                # LLM 客户端抽象(litellm/azure/poe/openai)
 │   ├── zh.py                 # 简繁转换(opencc 可选 + 内置表 + LLM)
 │   ├── corpus.py             # 只读语料访问(复用 tcm.py 索引)
-│   ├── ontology.py           # 本体加载/同义扩展/排除/图谱
+│   ├── ontology.py           # 本体加载/同义扩展/句级排除/图谱 BFS+PPR
 │   ├── embeddings.py         # 语义后端:tfidf 倒排(离线)+ 神经嵌入 + 磁盘缓存
-│   ├── recall.py             # 四路召回(lexical/synonym/graph/semantic)
-│   ├── rerank.py             # 加权重排(确定性)
-│   ├── agents.py             # 六个 LLM 角色 + 查询解析(LLM/规则双路)
+│   ├── recall.py             # 四路召回(lexical/synonym/graph/semantic)+ 名次记录
+│   ├── rerank.py             # 加权重排(确定性,含 RRF 子分)
+│   ├── agents.py             # 六个 LLM 角色 + 查询解析(LLM/规则双路)+ span 核验
 │   ├── evidence.py           # 证据对象 + 证据卡片渲染
+│   ├── evaluate.py           # 金标准回归评测(Recall@k/MRR/排除/忠实度)
 │   └── pipeline.py           # 编排
+├── eval/
+│   └── gold.jsonl            # 金标准用例(实检验证后录入)
 └── ontology/
     ├── terms.osteoporosis.json      # L1-L7 术语
     ├── bridge.osteoporosis.json     # 古今表型桥接矩阵 + M1-M5

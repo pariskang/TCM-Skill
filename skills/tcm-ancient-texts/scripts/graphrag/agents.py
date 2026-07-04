@@ -15,6 +15,7 @@ from .llm import LLMClient
 from .ontology import Ontology, to_traditional
 
 _SENT_SPLIT = re.compile(r"[。！？；\n]")
+_WS = re.compile(r"\s+")
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +98,18 @@ def _rule_analyze(query: str, onto: Ontology) -> dict:
 # 1. Extractor
 # ---------------------------------------------------------------------------
 
+def span_grounded(span: str, text: str) -> Optional[bool]:
+    """引用忠实度的确定性核验:evidence_span 是否为原文的逐字连续子串
+    (忽略空白差异)。None=无 span 可核;True/False=核验结果。
+
+    这是 attributable generation 评测(ALCE 等)中"引文必须支撑断言"原则的
+    最低但可完全确定性执行的形式:span 若非原文子串,则一定是改写或编造。
+    """
+    if not span:
+        return None
+    return _WS.sub("", str(span)) in _WS.sub("", text)
+
+
 def extract(client: Optional[LLMClient], text: str, onto: Ontology) -> dict:
     if client is None:
         return _rule_extract(text, onto)
@@ -110,7 +123,9 @@ def extract(client: Optional[LLMClient], text: str, onto: Ontology) -> dict:
         d = client.complete_json(sys, user)
         if not isinstance(d, dict):
             return _rule_extract(text, onto)
-        if not d.get("evidence_span"):
+        # 源头修复:LLM 给出的 span 若非原文子串(改写/编造),立即用规则 span 替换,
+        # 保证进入卡片的引文永远逐字来自原文。
+        if not d.get("evidence_span") or span_grounded(d["evidence_span"], text) is False:
             d["evidence_span"] = _best_span(text, _rule_extract(text, onto))
         return d
     except Exception:
@@ -180,14 +195,16 @@ def normalize(client: Optional[LLMClient], entities: dict, onto: Ontology,
 
 def _rule_normalize(entities: dict, onto: Ontology, text: str) -> dict:
     phenos, best_rank, best_type = [], -1, "relatedMatch"
-    excl = onto.exclusions_in_text(text)
+    # 句级共现判定:仅当核心词句均处被排除语境(hard)才判 negativeMatch;
+    # 排除词只出现在他句(soft)时保留正常映射(裁判层会降级并提示复核)。
+    scoped = onto.exclusions_scoped(text)
     for b in onto.bridges:
         if any(a in text for a in b.get("ancient", [])):
             phenos.extend(b.get("modern_phenotype", []))
             r = _MATCH_RANK.get(b.get("match", "relatedMatch"), 1)
             if r > best_rank:
                 best_rank, best_type = r, b.get("match", "relatedMatch")
-    if excl:
+    if scoped["flags"] and scoped["hard"]:
         best_type = "negativeMatch"
     return {
         "modern_phenotypes": list(dict.fromkeys(phenos)),
@@ -267,6 +284,9 @@ def judge(client: Optional[LLMClient], query_analysis: dict, card_data: dict,
 
 def _rule_judge(card_data: dict, onto: Ontology) -> dict:
     excl = card_data.get("exclusion_flags") or []
+    # 句级共现判定的硬/软排除(见 Ontology.exclusions_scoped);
+    # 缺省 True 保守处理(旧调用方未提供时不放宽)。
+    excl_hard = bool(card_data.get("exclusion_hard", True))
     has_symptom = bool(card_data.get("ancient_disease_terms")
                        or card_data.get("manifestations"))
     has_pattern = bool(card_data.get("patterns"))
@@ -275,8 +295,8 @@ def _rule_judge(card_data: dict, onto: Ontology) -> dict:
     n_pheno = len(card_data.get("modern_phenotypes") or [])
     mtype = card_data.get("mapping_type", "")
 
-    if excl and not (has_pattern and has_treat):
-        grade, reason = "E", f"命中排除项({'、'.join(excl)}),语境不支持作为骨质疏松证据。"
+    if excl and excl_hard and not (has_pattern and has_treat):
+        grade, reason = "E", f"命中排除项({'、'.join(excl)}),核心词所在句均处被排除语境。"
     elif mtype == "negativeMatch":
         grade, reason = "D", "映射为负向(排除)语境,易误配,不建议纳入。"
     elif has_symptom and has_pattern and has_treat and n_pheno >= 1:
@@ -287,8 +307,14 @@ def _rule_judge(card_data: dict, onto: Ontology) -> dict:
         grade, reason = "C", "仅见单一表型或宽泛相关,作背景证据。"
     else:
         grade, reason = "D", "与本病种关联牵强。"
+    # 软排除(排除词在他句,核心词句干净):不一票否决,但 A 降为 B,
+    # 提示同段含混杂语境,需专家复核后方可作核心证据。
+    if excl and not excl_hard and grade == "A":
+        grade = "B"
+        reason += f"(同段含排除词 {'、'.join(excl)},但不与核心词同句;降为支持证据待复核)"
     base = {"A": 0.88, "B": 0.72, "C": 0.55, "D": 0.35, "E": 0.15}[grade]
-    score = round(base + 0.03 * min(3, n_pheno) - 0.05 * len(excl), 3)
+    penalty = 0.05 * len(excl) if excl_hard else 0.02 * len(excl)
+    score = round(base + 0.03 * min(3, n_pheno) - penalty, 3)
     return {"grade": grade, "relevance_score": max(0.0, min(1.0, score)), "reason": reason}
 
 
@@ -298,6 +324,11 @@ def _rule_judge(card_data: dict, onto: Ontology) -> dict:
 
 def verify(client: Optional[LLMClient], evidence_span: str, card_data: dict,
            full_text: str, onto: Ontology = None) -> dict:
+    # 确定性前置核验:span 非原文子串 → 直接判不通过,LLM 无权放行。
+    # (extract 已在源头修复,此处为纵深防御,防任何路径漏进改写的引文。)
+    if span_grounded(evidence_span, full_text) is False:
+        return {"grounded": False,
+                "note": "evidence_span 非原文逐字子串(引用忠实度核验失败)"}
     if client is None:
         return _rule_verify(card_data, full_text, onto)
     sys = ("你是事实核验器。检查抽取出的每个术语/表型是否真的能在条文原文中找到"

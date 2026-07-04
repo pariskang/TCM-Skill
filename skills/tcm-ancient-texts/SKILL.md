@@ -87,11 +87,13 @@ python3 scripts/tcm_graphrag.py ask "骨痿 腰膝酸软" --format json   # 供�
 python3 scripts/tcm_graphrag.py domains                            # 可用病种本体
 ```
 
-它复用同一份 SQLite 索引,叠加:古今术语本体、**四路召回**(lexical/synonym/graph/
-**语义向量**)、加权重排、**LLM 交叉编码器精排**、六个 LLM 角色(查询解析/抽取/归一/
-精排/证据裁判/幻觉核验)、排除机制与证据卡片。**简体查询完美支持**(opencc/内置表/
-LLM 三重归一)。可切换 LLM 后端 `--provider rule|litellm|azure|poe|openai`、语义后端
-`--semantic tfidf|openai|...` 提升质量;默认 `rule`+`tfidf` 全离线可跑。
+它复用同一份 SQLite 索引,叠加:古今术语本体、**四路召回**(lexical/synonym/
+**PPR 图谱**/**语义向量**)、**RRF 多路名次融合**、加权重排、**LLM 交叉编码器精排**、
+六个 LLM 角色(查询解析/抽取/归一/精排/证据裁判/幻觉核验)、**句级共现排除**、
+**引用忠实度双层核验**(evidence_span 必须逐字来自原文)与证据卡片。
+**简体查询完美支持**(opencc/内置表/LLM 三重归一)。可切换 LLM 后端
+`--provider rule|litellm|azure|poe|openai`、语义后端 `--semantic tfidf|openai|...`
+提升质量;默认 `rule`+`tfidf` 全离线可跑;`eval` 子命令跑金标准回归评测。
 **引用铁律同样适用**:证据卡片的原文与出处来自检索,不可脱离工具编造。
 详见 `docs/GRAPHRAG.md`(在仓库根)。当前病种 MVP:骨质疏松。
 
