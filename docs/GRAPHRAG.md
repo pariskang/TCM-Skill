@@ -11,6 +11,11 @@
 > **哪一条古籍原文,在什么上下文中,通过什么术语、表型、证候、治法和方药证据,
 > 可以在多大程度上支持某个现代疾病或研究假说。**
 
+> **方法学依据**:检索融合(HippoRAG 2 的 PPR、RRF)、引用忠实度核验
+> (ALCE / FActScore / RAGAS)等设计的文献支撑见 [`docs/RESEARCH.md`](RESEARCH.md)
+> ——每项决策对齐到 2024–2026 经三票对抗核验存活的顶会结论,并诚实标注
+> 未验证方向(古汉语 NLP / ICD-11 TM / GRADE)。
+
 ## 与基础检索(tcm.py)的关系
 
 | | tcm.py | graphrag |
@@ -220,8 +225,13 @@ S_final = 0.15·lexical + 0.15·semantic + 0.10·rrf + 0.15·ontology
 | ask | 端到端:期望条文入卡、最低等级约束、**全部 evidence_span 过引用忠实度核验** | Recall@k、MRR、span 违例数 |
 | exclusion | 危候等禁忌片段只允许 E 级 | 排除正确率 |
 
-任一用例失败即 exit 1,可直接作 CI 回归门。当前 12/12 通过
-(平均 Recall@10 = 1.000)。
+汇总额外输出 **RAGAS 式免参考忠实度** `F=|V|/|S|`(Es et al., EACL 2024):
+S=卡片抽取的全部要素,V=其中确有原文支撑者。任一用例失败即 exit 1,
+可直接作 CI 回归门。当前 **12/12 通过,平均 Recall@10 = 1.000,F = 1.000**。
+
+> 上述所有设计的文献依据(HippoRAG 2 / LightRAG / RRF / ALCE / FActScore /
+> CoVe / RAGAS 等,均经三票对抗核验)见 [`docs/RESEARCH.md`](RESEARCH.md);
+> 完整核验记录见 `docs/research-notes/graphrag-sota-2026.md`。
 
 ## 引用忠实度:双层确定性防线
 

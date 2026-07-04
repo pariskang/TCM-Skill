@@ -110,6 +110,25 @@ def _eval_exclusion(result: dict, case: dict) -> dict:
             "detail": ("危候均被正确排除" if ok else "违例:" + "、".join(bad))}
 
 
+def _faithfulness(cards, onto) -> tuple:
+    """RAGAS 式免参考忠实度 F=|V|/|S|(Es et al., EACL 2024)。
+
+    S = 卡片抽取的全部要素(病名/表型/方药),V = 其中确有原文支撑者
+    (原词或任一同义写法出现于原文)。返回 (F, |V|, |S|)。
+    这是"每个断言必须被检索内容支撑"原则的确定性、离线可算形式。
+    """
+    syn = {t.term: t.synonyms for t in onto.terms}
+    total = supported = 0
+    for c in cards:
+        for key in ("ancient_disease_terms", "manifestations", "formulas_or_herbs"):
+            for term in (getattr(c, key, None) or []):
+                total += 1
+                variants = syn.get(term, [term]) or [term]
+                if any(v in c.original_text for v in variants):
+                    supported += 1
+    return (supported / total if total else 1.0), supported, total
+
+
 def run_eval(cfg, gold_path: Optional[str] = None, k: int = 10,
              out=sys.stdout) -> bool:
     cases = load_gold(gold_path)
@@ -118,6 +137,7 @@ def run_eval(cfg, gold_path: Optional[str] = None, k: int = 10,
     engine = None
     ask_cache: dict = {}
     rows, n_ok = [], 0
+    faith_v = faith_s = 0
     try:
         for case in cases:
             t = case["type"]
@@ -130,6 +150,9 @@ def run_eval(cfg, gold_path: Optional[str] = None, k: int = 10,
                 q = case["query"]
                 if q not in ask_cache:
                     ask_cache[q] = engine.ask(q)
+                    _, v, s = _faithfulness(ask_cache[q]["cards"], engine.onto)
+                    faith_v += v
+                    faith_s += s
                 r = (_eval_ask(ask_cache[q], case, k) if t == "ask"
                      else _eval_exclusion(ask_cache[q], case))
             n_ok += int(r["ok"])
@@ -149,7 +172,9 @@ def run_eval(cfg, gold_path: Optional[str] = None, k: int = 10,
               f"| {mark} | {r['detail']} |", file=out)
     rec = [r["recall"] for _, _, r in rows]
     mrr = [r["mrr"] for _, _, r in rows]
+    faith = (faith_v / faith_s) if faith_s else 1.0
     print(f"\n**汇总** — 通过 {n_ok}/{len(rows)};"
           f"平均 Recall@{k} = {sum(rec)/len(rec):.3f};"
-          f"平均 MRR = {sum(mrr)/len(mrr):.3f}", file=out)
+          f"平均 MRR = {sum(mrr)/len(mrr):.3f};"
+          f"忠实度 F=|V|/|S| = {faith:.3f}({faith_v}/{faith_s},RAGAS 式)", file=out)
     return n_ok == len(rows)
