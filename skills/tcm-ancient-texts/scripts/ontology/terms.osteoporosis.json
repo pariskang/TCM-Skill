@@ -1,0 +1,59 @@
+{
+  "domain": "osteoporosis",
+  "label": "骨质疏松 / 骨质疏松性骨折",
+  "note": "术语按 L1-L7 古籍本体分层;synonyms 用于同义/异体召回扩展;exclusion 为该词的假阳性语境。所有词为繁体。",
+  "terms": {
+    "L1_disease": [
+      {"term": "骨痿", "synonyms": ["骨痿", "痿躄", "骨痿不能起於床"], "exclusion": ["神經源性痿", "熱痿", "肺熱葉焦"]},
+      {"term": "骨枯", "synonyms": ["骨枯", "大骨枯槁", "體竭骨枯"], "exclusion": ["真臟脈見", "期六月死", "大肉陷下"]},
+      {"term": "骨痹", "synonyms": ["骨痹", "骨重", "骨節疼痛"], "exclusion": ["歷節", "外傷", "癰疽附骨"]},
+      {"term": "骨蝕", "synonyms": ["骨蝕", "附骨疽"], "exclusion": ["癰疽", "外傷化膿"]},
+      {"term": "腰痛", "synonyms": ["腰痛", "腰脊痛", "腰背痛", "腰重"], "exclusion": ["跌仆閃挫", "外傷腰痛", "石淋腰痛"]}
+    ],
+    "L2_pattern": [
+      {"term": "腎虛", "synonyms": ["腎虛", "腎氣虛", "腎精不足", "精虧", "腎虛精虧"], "exclusion": []},
+      {"term": "腎陽虛", "synonyms": ["腎陽虛", "命門火衰", "腎陽不足"], "exclusion": []},
+      {"term": "肝腎不足", "synonyms": ["肝腎不足", "肝腎虧虛", "肝腎陰虛", "精血不足"], "exclusion": []},
+      {"term": "脾腎陽虛", "synonyms": ["脾腎陽虛", "脾腎兩虛", "脾腎不足"], "exclusion": []},
+      {"term": "血瘀", "synonyms": ["血瘀", "瘀血", "瘀血阻絡", "絡阻", "血脈瘀阻"], "exclusion": []},
+      {"term": "氣血虧虛", "synonyms": ["氣血虧虛", "氣血兩虛", "血虛", "營血不足"], "exclusion": []}
+    ],
+    "L3_manifestation": [
+      {"term": "腰膝酸軟", "synonyms": ["腰膝酸軟", "腰膝痠軟", "腰膝無力", "腰膝痿弱"], "exclusion": []},
+      {"term": "步履艱難", "synonyms": ["步履艱難", "不能行", "不能久立", "行遲", "足痿軟", "足嚲曳"], "exclusion": ["中風偏枯", "小兒行遲"]},
+      {"term": "骨痛", "synonyms": ["骨痛", "骨節疼痛", "骨中痛", "痠痛"], "exclusion": ["外傷", "歷節風"]},
+      {"term": "齒搖", "synonyms": ["齒搖", "齒動", "牙齒動搖", "齒豁"], "exclusion": ["蟲蝕牙痛", "風火牙痛"]},
+      {"term": "身重", "synonyms": ["身重", "身重不能行", "體重"], "exclusion": ["水腫身重", "濕痹身重"]},
+      {"term": "髓減", "synonyms": ["髓減", "髓枯", "髓不滿", "骨髓不足"], "exclusion": []}
+    ],
+    "L4_population": [
+      {"term": "年老", "synonyms": ["年老", "老人", "年高", "年邁", "高年", "老年"], "exclusion": []},
+      {"term": "婦人", "synonyms": ["婦人", "婦女", "女子", "室女"], "exclusion": ["妊娠", "產後金刃"]},
+      {"term": "久病", "synonyms": ["久病", "久虛", "積虛", "大病後"], "exclusion": []},
+      {"term": "七七天癸竭", "synonyms": ["天癸竭", "七七", "經斷", "地道不通"], "exclusion": []}
+    ],
+    "L5_therapy": [
+      {"term": "補腎", "synonyms": ["補腎", "益腎", "滋腎", "填精", "補腎填精"], "exclusion": []},
+      {"term": "壯骨強筋", "synonyms": ["壯骨", "強筋", "強筋骨", "堅筋骨", "堅骨"], "exclusion": []},
+      {"term": "溫補命門", "synonyms": ["溫補命門", "溫腎", "補火", "益火之源"], "exclusion": []},
+      {"term": "活血通絡", "synonyms": ["活血", "化瘀", "活血化瘀", "通絡", "行血"], "exclusion": []},
+      {"term": "健脾益氣", "synonyms": ["健脾", "補脾", "益氣", "補中益氣"], "exclusion": []}
+    ],
+    "L6_formula_herb": [
+      {"term": "熟地黃", "synonyms": ["熟地", "熟地黃", "地黃"], "exclusion": []},
+      {"term": "杜仲", "synonyms": ["杜仲", "思仲"], "exclusion": []},
+      {"term": "牛膝", "synonyms": ["牛膝", "懷牛膝", "川牛膝"], "exclusion": []},
+      {"term": "續斷", "synonyms": ["續斷", "川斷"], "exclusion": []},
+      {"term": "骨碎補", "synonyms": ["骨碎補", "猴薑"], "exclusion": []},
+      {"term": "補骨脂", "synonyms": ["補骨脂", "破故紙"], "exclusion": []},
+      {"term": "肉蓯蓉", "synonyms": ["肉蓯蓉", "蓯蓉"], "exclusion": []},
+      {"term": "菟絲子", "synonyms": ["菟絲子", "菟絲"], "exclusion": []},
+      {"term": "龜板", "synonyms": ["龜板", "龜甲"], "exclusion": []},
+      {"term": "虎骨", "synonyms": ["虎骨"], "exclusion": []}
+    ],
+    "L7_outcome": [
+      {"term": "骨堅", "synonyms": ["骨堅", "筋骨堅", "強健"], "exclusion": []},
+      {"term": "能行", "synonyms": ["能行", "行走如常", "步履復常"], "exclusion": []}
+    ]
+  }
+}

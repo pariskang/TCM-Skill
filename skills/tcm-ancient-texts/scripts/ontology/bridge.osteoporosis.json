@@ -1,0 +1,24 @@
+{
+  "domain": "osteoporosis",
+  "label": "古今表型桥接矩阵 · 骨质疏松",
+  "note": "每行:现代维度 → 现代表型(M2/M3) → 中医证候/症状 → 古籍候选表述(L 层) → 匹配等级。match ∈ {exactMatch,broadMatch,narrowMatch,relatedMatch,negativeMatch}。level 为该桥的先验证据等级建议 A-E,供裁判参考,非最终结论。",
+  "modern_layers": {
+    "M1_disease": ["骨質疏鬆症", "絕經後骨質疏鬆(PMOP)", "老年性骨質疏鬆(SOP)", "骨質疏鬆性骨折"],
+    "M2_phenotype": ["低骨量", "脆性骨折", "椎體壓縮", "骨痛", "活動受限", "步態不穩", "身高變矮"],
+    "M3_objective": ["DXA", "BMD", "T-score", "骨小梁參數", "骨轉換標志物"],
+    "M4_context": ["絕經後", "老年", "長期激素", "體弱", "跌倒風險"],
+    "M5_mechanism": ["OVX 模型", "BMSCs 成骨分化", "破骨活性", "線粒體穩態", "炎症微環境"]
+  },
+  "bridges": [
+    {"dimension": "骨量/骨强度", "modern_phenotype": ["低骨量", "骨脆弱"], "tcm": ["腎精不足", "骨弱"], "ancient": ["骨痿", "骨枯", "髓減"], "match": "broadMatch", "level": "B"},
+    {"dimension": "骨折风险", "modern_phenotype": ["脆性骨折", "椎体压缩"], "tcm": ["筋骨不堅", "跌仆易傷"], "ancient": ["骨脆", "骨蝕"], "match": "relatedMatch", "level": "C", "caveat": "须排除外伤性折伤"},
+    {"dimension": "疼痛", "modern_phenotype": ["腰背痛", "骨痛"], "tcm": ["腰痛", "骨痛", "腰膝酸軟"], "ancient": ["腰痛", "骨痛", "腰膝酸軟"], "match": "exactMatch", "level": "A"},
+    {"dimension": "功能", "modern_phenotype": ["活动受限", "步态不稳"], "tcm": ["步履艱難", "不能久立"], "ancient": ["步履艱難", "痿弱", "不能行", "身重不能行"], "match": "broadMatch", "level": "B"},
+    {"dimension": "人群", "modern_phenotype": ["绝经后", "老年"], "tcm": ["年老腎虧", "婦人血少", "天癸竭"], "ancient": ["年老", "婦人", "七七天癸竭"], "match": "broadMatch", "level": "B"},
+    {"dimension": "病机", "modern_phenotype": ["骨代谢失衡"], "tcm": ["腎虛", "肝腎不足", "脾腎陽虛", "血瘀"], "ancient": ["腎虛", "腎陽虛", "肝腎不足", "血瘀"], "match": "relatedMatch", "level": "A"},
+    {"dimension": "干预", "modern_phenotype": ["抗骨质疏松", "促成骨"], "tcm": ["補腎", "強筋骨", "活血通絡"], "ancient": ["補腎", "壯骨強筋", "溫補命門", "活血通絡"], "match": "broadMatch", "level": "A"}
+  ],
+  "global_exclusions": [
+    "外傷折傷", "跌打損傷", "癰疽附骨", "溫病", "小兒行遲", "中風偏枯", "真臟脈危候", "水腫身重", "歷節風"
+  ]
+}
