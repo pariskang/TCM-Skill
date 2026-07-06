@@ -106,15 +106,44 @@ RRF 的 NDCG@10 比分数融合低 3.86%。
   哪部书哪一条?"类验证问题→各自独立走 tcm.py 检索回答→据此修订),验证问答
   与初稿严格隔离。
 
-## 6. 金标准回归评测
+## 6. 方证极性:否定/禁忌检测(NegEx / ConText)
+
+**文献(临床 NLP 奠基方法,非本次 workflow 核验范围,按经典文献引用)**:
+- **NegEx** — Chapman WW, Bridewell W, Hanbury P, Cooper GF, Buchanan BG.
+  *A simple algorithm for identifying negated findings and diseases in
+  discharge summaries.* **J Biomed Inform 2001**;34(5):301–310.
+- **ConText** — Harkema H, Dowling JN, Thornblade T, Chapman WW. *ConText:
+  An algorithm for determining negation, experiencer, and temporal status
+  from clinical reports.* **J Biomed Inform 2009**;42(5):839–851.
+
+**核心方法**:临床概念的否定状态由**否定线索词 + 作用域**决定——线索词触发,
+遇作用域终止符(标点/连词)停止;每个概念独立判定,一句可肯定 A 概念、否定 B 概念。
+
+**本系统的落地(已实现)**:`graphrag/negation.py` 把该算法适配到文言中医文本——
+分句作用域(，。；、),前置线索(不可與/勿與/未可與/慎不可/不宜/禁/忌)、后置
+线索(X不中與之/X不可與之)、回指否定(不可與之 独立分句回指主方)、危险警示
+(X下咽…斃/亡/死)。极性是**每个方剂目标**的属性,聚合为 处方/禁忌/辨证使用/论述。
+
+**为何重要**:《伤寒论》对同一方剂在不同证候立场相反(桂枝湯"主之" vs "不可與
+桂枝湯"),把二者当同等相关是证据系统的科学错误。此能力使证据卡片能区分"处方
+证据"与"禁忌反证",并对被禁忌的方剂在重排/裁判中降权。**跨域通用**:非仅《伤寒论》,
+《景岳全书》"其有生平不宜熟地者"亦被正确判为熟地禁忌。5 个《伤寒论》复杂案例
+(含混合极性)进金标准回归(P01–P05)。
+
+> **诚实边界**:NegEx/ConText 系按其原始发表文献引用的**奠基方法**,非本次三票
+> 对抗核验流程的产物;本模块是其**规则式适配**,未在大规模标注中医语料上做过
+> 召回/精确率评测,仅在金标准回归的具体条文上验证正确。大规模评测列为公开问题。
+
+## 7. 金标准回归评测
 
 **文献**:ALCE 的固定语料+问题+人工可支持性标注的金标准构建法;RAGAS 免参考
 持续回归。
 
 **本系统的落地(已实现)**:`eval/gold.jsonl`(用例均先经 `tcm.py` 实检验证后
 录入)+ `tcm_graphrag.py eval`,用 provider=rule+tfidf 全确定性路径回归
-Recall@k / MRR / 排除正确率 / span 忠实度,失败即 exit 1。**发布门禁**用此金标集,
-**日常回归**用 RAGAS 式 faithfulness 聚合,二者互补。
+Recall@k / MRR / 排除正确率 / **方证极性正确率** / span 忠实度,失败即 exit 1。
+**发布门禁**用此金标集(当前 17 用例,含 5 个《伤寒论》极性),**日常回归**用
+RAGAS 式 faithfulness 聚合,二者互补。
 
 ---
 

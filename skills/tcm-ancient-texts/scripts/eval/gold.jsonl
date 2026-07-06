@@ -10,3 +10,8 @@
 {"id": "A02-骨枯证据卡", "type": "ask", "query": "骨枯 髓減 腰痛", "min_cards": 1, "note": "多词查询须产出证据卡且全部 evidence_span 通过忠实度核验"}
 {"id": "X01-危候硬排除", "type": "exclusion", "query": "骨枯 髓減", "forbid_substring": "期六月死", "allowed_grades": ["E"], "note": "玉機真臟論危候预后(素問/甲乙經/景岳三源)只允许E级"}
 {"id": "X02-危候硬排除2", "type": "exclusion", "query": "骨痿 腰膝酸軟", "forbid_substring": "期六月死", "allowed_grades": ["E"], "note": "换查询词危候仍不得进入A-D"}
+{"id": "P01-桂枝汤处方", "type": "polarity", "book": "傷寒論（宋本）", "seq": 159, "targets": ["桂枝湯"], "expect": {"桂枝湯": "affirm"}, "note": "太陽中風桂枝湯主之——处方(该用)"}
+{"id": "P02-桂枝汤禁忌", "type": "polarity", "book": "傷寒論（宋本）", "seq": 166, "targets": ["桂枝湯"], "expect": {"桂枝湯": "negate"}, "note": "酒客病不可與桂枝湯——禁忌(禁用),与处方语义相反不可混同"}
+{"id": "P03-桂枝不中与", "type": "polarity", "book": "傷寒論（宋本）", "seq": 165, "targets": ["桂枝"], "expect": {"桂枝": "negate"}, "note": "壞病桂枝不中與之也 + 不可與之也(回指否定)"}
+{"id": "P04-承气条件辨证", "type": "polarity", "book": "傷寒論（宋本）", "seq": 584, "targets": ["大承氣湯", "小承氣湯"], "expect": {"大承氣湯": "conditional", "小承氣湯": "affirm"}, "note": "同段内不同方剂不同极性:大承气可與/不可與之(条件辨证),小承气和之(处方)"}
+{"id": "P05-柴胡条件辨证", "type": "polarity", "book": "傷寒論（宋本）", "seq": 463, "targets": ["柴胡", "半夏瀉心湯"], "expect": {"柴胡": "conditional", "半夏瀉心湯": "affirm"}, "note": "復與柴胡湯(肯定)+柴胡不中與之(否定)→条件;痞证宜半夏瀉心湯(处方)"}

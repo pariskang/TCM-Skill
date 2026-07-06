@@ -74,6 +74,12 @@ class Corpus:
             (passage_id,)).fetchone()
         return dict(r) if r else None
 
+    def get_passage_by_book_seq(self, book: str, seq: int):
+        r = self.db.execute(
+            "SELECT id, book, seq, path, text FROM paras WHERE book=? AND seq=?",
+            (book, seq)).fetchone()
+        return dict(r) if r else None
+
     def context(self, book: str, seq: int, span: int = 1):
         rows = self.db.execute(
             "SELECT seq, text FROM paras WHERE book=? AND seq BETWEEN ? AND ? ORDER BY seq",

@@ -51,6 +51,9 @@ class EvidenceCard:
     # 归一化(Normalizer)
     modern_phenotypes: List[str] = field(default_factory=list)
     mapping_type: str = ""            # exact/broad/narrow/related/negative Match
+    # 方剂/治法极性(Negation/ConText):处方 vs 禁忌 vs 辨证使用
+    polarity: str = "neutral"         # affirm/negate/conditional/neutral
+    polarity_note: str = ""           # 命中的否定/禁忌线索说明
     # 裁判(Evidence Judge)
     relevance_score: float = 0.0
     grade: str = ""                   # A/B/C/D/E
@@ -101,6 +104,13 @@ class EvidenceCard:
         if self.modern_phenotypes:
             lines.append(f"- **映射现代表型**：{'、'.join(self.modern_phenotypes)}"
                          + (f"（{self.mapping_type}）" if self.mapping_type else ""))
+        if self.polarity and self.polarity != "neutral":
+            pbadge = {"affirm": "✅ 处方（该证可用）",
+                      "negate": "⛔ 禁忌（此证禁用）",
+                      "conditional": "⚖️ 辨证使用（随证可用可禁）"}.get(
+                          self.polarity, self.polarity)
+            lines.append(f"- **方证极性**：{pbadge}"
+                         + (f"（线索：{self.polarity_note}）" if self.polarity_note else ""))
         if self.inclusion_reason:
             lines.append(f"- **纳入理由**：{self.inclusion_reason}")
         lines.append(f"- **排除检查**："

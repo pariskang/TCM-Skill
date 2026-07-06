@@ -120,6 +120,34 @@ EvidenceJudge + Verifier(均可用 `role_models` 分别指定模型;provider=rul
 
 两个方向都进了金标准回归用例(A01/X01/X02),任何回归立即暴露。
 
+## 方证极性:处方 vs 禁忌(否定/禁忌检测)
+
+古籍(尤以《伤寒论》)对**同一方剂在不同证候下立场相反**,朴素检索把它们当同等
+相关是科学错误:
+
+| 原文 | 立场 |
+|---|---|
+| 太陽病…**桂枝湯主之**(段159) | 处方(该用)|
+| 若酒客病,**不可與桂枝湯**(段166) | 禁忌(禁用)|
+| 壞病,**桂枝不中與之**也(段165) | 禁忌 |
+| 可與大承氣湯…**不可與之**(段584) | 辨证使用(条件)|
+
+`graphrag/negation.py` 是临床 NLP 否定检测经典算法(**NegEx**, Chapman et al.,
+J Biomed Inform 2001;**ConText**, Harkema et al., J Biomed Inform 2009)对文言
+中医文本的适配:极性是**每个方剂目标**的属性,由**否定线索词 + 分句作用域**决定
+——**一段可同时肯定 A 方、否定 B 方**(段584:大承气条件、小承气处方;段463:柴胡
+条件、半夏泻心汤处方)。聚合规则:全否定→`negate`、全肯定→`affirm`、既肯定又
+否定→`conditional`(辨证使用)、仅提及→`neutral`。
+
+落地三处:
+- **证据卡片**:新增「方证极性」徽章(✅处方 / ⛔禁忌 / ⚖️辨证使用),并列出命中线索;
+- **重排**:`polarity` 惩罚子分(禁忌全罚、辨证半罚)——被禁忌的方剂作为"该方治此病"
+  的证据更弱,但不剔除(禁忌本身是有价值的反证);
+- **裁判**:方剂被明确禁忌时封顶 C 级(反证/背景),辨证使用封顶 B 级。
+
+全部 5 个《伤寒论》复杂案例(含混合极性 段584/463)进金标准回归(P01–P05);
+且该能力**跨域通用**——已验证《景岳全书》"其有生平不宜熟地者"正确判为熟地禁忌。
+
 ## LLM 后端:统一抽象,四家可切换 + 离线兜底
 
 | provider | 依赖 | 用途 |
@@ -204,12 +232,14 @@ python3 tcm_graphrag.py eval                   # 金标准回归评测(CI 可用
 ```
 S_final = 0.15·lexical + 0.15·semantic + 0.10·rrf + 0.15·ontology
         + 0.15·phenotype + 0.10·context + 0.10·evidence + 0.05·dynasty
-        − 0.05·exclusion
+        − 0.05·exclusion − 0.05·polarity
 ```
 
 - `rrf` = 各召回列表名次的 Reciprocal Rank Fusion(k=60),按候选集内最大值
   归一;度量"多路召回共识"。
 - `exclusion` 按句级共现判定:硬排除全额扣分,软排除打 0.35 折(见排除机制)。
+- `polarity` 惩罚:方剂被禁忌(negate)全额扣分、辨证使用(conditional)半罚
+  (见方证极性)。
 - 未启用 semantic(无向量)时,其权重按 6:4 自动分摊给 lexical/ontology,
   保证分值可比。各子分含义见 `graphrag/rerank.py`。权重可在配置文件
   `weights` 覆盖(含新增的 `rrf` 键)。
@@ -224,10 +254,12 @@ S_final = 0.15·lexical + 0.15·semantic + 0.10·rrf + 0.15·ontology
 | search | 检索地基:期望书目/段落在 top-k | Recall@k、MRR |
 | ask | 端到端:期望条文入卡、最低等级约束、**全部 evidence_span 过引用忠实度核验** | Recall@k、MRR、span 违例数 |
 | exclusion | 危候等禁忌片段只允许 E 级 | 排除正确率 |
+| polarity | 方剂处方/禁忌/辨证使用判定(《伤寒论》复杂案例) | 极性正确率 |
 
 汇总额外输出 **RAGAS 式免参考忠实度** `F=|V|/|S|`(Es et al., EACL 2024):
 S=卡片抽取的全部要素,V=其中确有原文支撑者。任一用例失败即 exit 1,
-可直接作 CI 回归门。当前 **12/12 通过,平均 Recall@10 = 1.000,F = 1.000**。
+可直接作 CI 回归门。当前 **17/17 通过,平均 Recall@10 = 1.000,F = 1.000**
+(含 5 个《伤寒论》方证极性用例 P01–P05)。
 
 > 上述所有设计的文献依据(HippoRAG 2 / LightRAG / RRF / ALCE / FActScore /
 > CoVe / RAGAS 等,均经三票对抗核验)见 [`docs/RESEARCH.md`](RESEARCH.md);
@@ -268,8 +300,11 @@ LLM 抽取的 `evidence_span` 可能是改写而非原文(attributable generatio
 - ✅ **RRF 多路融合**:四路召回名次的 Reciprocal Rank Fusion 子分(k=60)。
 - ✅ **PPR 图谱召回**:Personalized PageRank 对图谱扩展目标打分排序。
 - ✅ **句级共现排除**:硬/软排除区分,定义性条文不再被"全段一票否决"误杀。
+- ✅ **方证极性(否定/禁忌检测)**:NegEx/ConText 式,分句作用域、按方剂,
+  处方/禁忌/辨证使用三分;卡片徽章 + 重排惩罚 + 裁判降级。
 - ✅ **引用忠实度双层核验**:evidence_span 源头修复 + 核验入口确定性拦截。
-- ✅ **金标准回归评测**:`eval` 命令,12 用例全确定性回归,CI 可用。
+- ✅ **金标准回归评测**:`eval` 命令,17 用例全确定性回归(含《伤寒论》
+  方证极性),CI 可用。
 
 ## 扩展路线
 
@@ -293,12 +328,13 @@ scripts/
 │   ├── zh.py                 # 简繁转换(opencc 可选 + 内置表 + LLM)
 │   ├── corpus.py             # 只读语料访问(复用 tcm.py 索引)
 │   ├── ontology.py           # 本体加载/同义扩展/句级排除/图谱 BFS+PPR
+│   ├── negation.py           # 方证极性:NegEx/ConText 式否定/禁忌检测(处方/禁忌/辨证)
 │   ├── embeddings.py         # 语义后端:tfidf 倒排(离线)+ 神经嵌入 + 磁盘缓存
 │   ├── recall.py             # 四路召回(lexical/synonym/graph/semantic)+ 名次记录
-│   ├── rerank.py             # 加权重排(确定性,含 RRF 子分)
+│   ├── rerank.py             # 加权重排(确定性,含 RRF 子分 + 极性惩罚)
 │   ├── agents.py             # 六个 LLM 角色 + 查询解析(LLM/规则双路)+ span 核验
-│   ├── evidence.py           # 证据对象 + 证据卡片渲染
-│   ├── evaluate.py           # 金标准回归评测(Recall@k/MRR/排除/忠实度)
+│   ├── evidence.py           # 证据对象 + 证据卡片渲染(含方证极性徽章)
+│   ├── evaluate.py           # 金标准回归评测(Recall@k/MRR/排除/极性/忠实度)
 │   └── pipeline.py           # 编排
 ├── eval/
 │   └── gold.jsonl            # 金标准用例(实检验证后录入)

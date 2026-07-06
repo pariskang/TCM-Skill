@@ -130,6 +130,11 @@ class GraphRAG:
         if excl is None or excl_hard is None:
             scoped = self.onto.exclusions_scoped(c.text)
             excl, excl_hard = scoped["flags"], scoped["hard"]
+        # 方剂/治法极性(处方/禁忌/辨证使用):优先用 rerank 缓存,缺失则现算
+        polarity = getattr(c, "_polarity", None)
+        pol_cues = getattr(c, "_polarity_cues", None)
+        if polarity is None:
+            polarity, pol_cues = self.reranker._polarity(c.text)
         card_data = {
             "ancient_disease_terms": ents.get("ancient_disease_terms", []),
             "manifestations": ents.get("manifestations", []),
@@ -141,6 +146,7 @@ class GraphRAG:
             "mapping_type": norm.get("mapping_type", ""),
             "exclusion_flags": excl,
             "exclusion_hard": excl_hard,
+            "formula_polarity": polarity,
         }
         # 3. 裁判
         verdict = agents.judge(self.clients["judge"], analysis, card_data, self.onto)
@@ -162,6 +168,7 @@ class GraphRAG:
             population=card_data["population"],
             modern_phenotypes=card_data["modern_phenotypes"],
             mapping_type=card_data["mapping_type"],
+            polarity=polarity, polarity_note="、".join(pol_cues or []),
             relevance_score=rel, grade=verdict.get("grade", "C"),
             inclusion_reason=verdict.get("reason", ""),
             exclusion_flags=excl,

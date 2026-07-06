@@ -312,6 +312,15 @@ def _rule_judge(card_data: dict, onto: Ontology) -> dict:
     if excl and not excl_hard and grade == "A":
         grade = "B"
         reason += f"(同段含排除词 {'、'.join(excl)},但不与核心词同句;降为支持证据待复核)"
+    # 方证极性:方剂被明确禁忌(negate)时,不能作"该方治此病"的高等级证据——
+    # 封顶为 C(背景/反证);辨证使用(conditional)封顶为 B(需据证甄别)。
+    polarity = card_data.get("formula_polarity", "neutral")
+    if polarity == "negate" and grade in ("A", "B"):
+        grade = "C"
+        reason += "(方剂在原文中被禁忌/否定,作反证或背景,不宜作处方证据)"
+    elif polarity == "conditional" and grade == "A":
+        grade = "B"
+        reason += "(方剂为辨证使用,随证可用可禁,降为支持证据待甄别)"
     base = {"A": 0.88, "B": 0.72, "C": 0.55, "D": 0.35, "E": 0.15}[grade]
     penalty = 0.05 * len(excl) if excl_hard else 0.02 * len(excl)
     score = round(base + 0.03 * min(3, n_pheno) - penalty, 3)

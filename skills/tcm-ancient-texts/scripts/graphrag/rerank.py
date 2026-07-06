@@ -22,9 +22,10 @@ from .ontology import Ontology
 DEFAULT_WEIGHTS = {
     "lexical": 0.15, "semantic": 0.15, "rrf": 0.10, "ontology": 0.15,
     "phenotype": 0.15, "context": 0.10, "evidence": 0.10, "dynasty": 0.05,
-    "exclusion": 0.05,
+    "exclusion": 0.05, "polarity": 0.05,
 }
 _RRF_K = 60   # Cormack et al. 2009 的标准取值,对名次噪声鲁棒
+_PENALTY_KEYS = ("exclusion", "polarity")   # 这些子分在总分中取负
 
 # 朝代/文献权威性先验(粗粒度,可在 bridge 中细化)
 _DYNASTY_WEIGHT = {
@@ -50,6 +51,11 @@ class Reranker:
         for t in onto.terms:
             if t.layer in ("L1_disease", "L3_manifestation"):
                 self._context_chars.update(t.term)
+        # 方剂/治法目标词(含同义写法),用于极性检测
+        self._formula_terms = []
+        for t in onto.terms:
+            if t.layer in ("L5_therapy", "L6_formula_herb"):
+                self._formula_terms.extend(dict.fromkeys([t.term] + t.synonyms))
         # 若无语义分,把 semantic 权重分摊给 lexical+ontology
         if not semantic_enabled:
             s = self.w.pop("semantic", 0.0)
@@ -110,10 +116,16 @@ class Reranker:
             sub["exclusion"] = min(1.0, len(excl) / 2.0) * factor
             c._exclusions = excl          # 缓存供裁判使用
             c._excl_hard = scoped["hard"]
+            # polarity(惩罚项):方剂被禁忌/条件否定时,作为"该方治此病"的证据更弱。
+            # 处方(affirm)不罚;禁忌(negate)全罚;辨证使用(conditional)半罚。
+            pol, pol_cues = self._polarity(text)
+            sub["polarity"] = {"negate": 1.0, "conditional": 0.4}.get(pol, 0.0)
+            c._polarity = pol
+            c._polarity_cues = pol_cues
 
             total = 0.0
             for k, wv in self.w.items():
-                if k == "exclusion":
+                if k in _PENALTY_KEYS:
                     total -= wv * sub.get(k, 0.0)
                 else:
                     total += wv * sub.get(k, 0.0)
@@ -130,3 +142,27 @@ class Reranker:
             if any(a in text for a in b.get("ancient", [])):
                 hit += 1
         return min(1.0, hit / max(1, len(self.onto.bridges)))
+
+    def _polarity(self, text: str):
+        """段内出现的方剂/治法词的聚合极性 + 命中线索(见 negation 模块)。"""
+        from .negation import classify
+        present = [f for f in self._formula_terms if f and f in text]
+        if not present:
+            return "neutral", []
+        res = classify(text, present)
+        labels = {v["polarity"] for v in res.values()}
+        labels.discard("neutral")
+        cues = []
+        for v in res.values():
+            for cu in v["cues"]:
+                if cu not in cues:
+                    cues.append(cu)
+        if not labels:
+            pol = "neutral"
+        elif labels == {"affirm"}:
+            pol = "affirm"
+        elif labels == {"negate"}:
+            pol = "negate"
+        else:
+            pol = "conditional"
+        return pol, cues

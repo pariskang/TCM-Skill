@@ -90,10 +90,12 @@ python3 scripts/tcm_graphrag.py domains                            # 可用病�
 它复用同一份 SQLite 索引,叠加:古今术语本体、**四路召回**(lexical/synonym/
 **PPR 图谱**/**语义向量**)、**RRF 多路名次融合**、加权重排、**LLM 交叉编码器精排**、
 六个 LLM 角色(查询解析/抽取/归一/精排/证据裁判/幻觉核验)、**句级共现排除**、
-**引用忠实度双层核验**(evidence_span 必须逐字来自原文)与证据卡片。
-**简体查询完美支持**(opencc/内置表/LLM 三重归一)。可切换 LLM 后端
+**方证极性检测**(NegEx/ConText 式:处方/禁忌/辨证使用,如《伤寒论》"桂枝湯主之"
+vs "不可與桂枝湯")、**引用忠实度双层核验**(evidence_span 必须逐字来自原文)与
+证据卡片。**简体查询完美支持**(opencc/内置表/LLM 三重归一)。可切换 LLM 后端
 `--provider rule|litellm|azure|poe|openai`、语义后端 `--semantic tfidf|openai|...`
-提升质量;默认 `rule`+`tfidf` 全离线可跑;`eval` 子命令跑金标准回归评测。
+提升质量;默认 `rule`+`tfidf` 全离线可跑;`eval` 子命令跑金标准回归评测
+(17 用例,含《伤寒论》方证极性)。
 **引用铁律同样适用**:证据卡片的原文与出处来自检索,不可脱离工具编造。
 详见 `docs/GRAPHRAG.md`(在仓库根)。当前病种 MVP:骨质疏松。
 

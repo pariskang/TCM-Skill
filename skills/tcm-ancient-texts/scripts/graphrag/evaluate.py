@@ -110,6 +110,27 @@ def _eval_exclusion(result: dict, case: dict) -> dict:
             "detail": ("危候均被正确排除" if ok else "违例:" + "、".join(bad))}
 
 
+def _eval_polarity(corpus, case: dict) -> dict:
+    """方剂/治法极性检测(negation/ConText):在真实古籍条文上核验每个方剂的
+    处方/禁忌/辨证使用判定——《伤寒论》的方证肯定与禁忌否定不可混同。"""
+    from .negation import classify
+    row = corpus.get_passage_by_book_seq(case["book"], case["seq"])
+    if not row:
+        return {"recall": 0.0, "mrr": 0.0, "ok": False,
+                "detail": f"未找到 《{case['book']}》段{case['seq']}"}
+    got = classify(row["text"], case["targets"])
+    bad = []
+    for tgt, want in case["expect"].items():
+        g = got.get(tgt, {}).get("polarity", "缺失")
+        if g != want:
+            bad.append(f"{tgt}:{g}≠{want}")
+    ok = not bad
+    n = len(case["expect"])
+    recall = (n - len(bad)) / n if n else 1.0
+    return {"recall": recall, "mrr": 1.0 if ok else 0.0, "ok": ok,
+            "detail": ("极性判定全部正确" if ok else "误判:" + "、".join(bad))}
+
+
 def _faithfulness(cards, onto) -> tuple:
     """RAGAS 式免参考忠实度 F=|V|/|S|(Es et al., EACL 2024)。
 
@@ -143,6 +164,8 @@ def run_eval(cfg, gold_path: Optional[str] = None, k: int = 10,
             t = case["type"]
             if t == "search":
                 r = _eval_search(corpus, case, k)
+            elif t == "polarity":
+                r = _eval_polarity(corpus, case)
             else:
                 if engine is None:
                     from .pipeline import GraphRAG
